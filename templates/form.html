@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}{{ form_title }}{% endblock %}
+{% block content %}
+<div class="max-w-2xl mx-auto">
+  <div class="flex items-center justify-between mb-4">
+    <h1 class="text-2xl font-bold">{{ form_title }}</h1>
+    <a href="{{ cancel_url }}" class="text-sm text-slate-500 hover:underline">Cancel</a>
+  </div>
+  <form method="post" class="bg-white rounded-lg shadow p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+    {% for f in fields %}
+    <div class="{{ 'md:col-span-2' if f.type in ('textarea',) }}">
+      <label class="block text-sm font-medium text-slate-700 mb-1">
+        {{ f.label }}{% if f.required %} <span class="text-red-500">*</span>{% endif %}
+      </label>
+      {% set v = values.get(f.name, '') %}
+      {% if f.type == 'select' %}
+        <select name="{{ f.name }}" {{ 'required' if f.required }}
+                class="w-full border rounded px-3 py-2 text-sm">
+          <option value="">— select —</option>
+          {% for c in f.choices %}
+            {% if c is iterable and c is not string %}
+              <option value="{{ c[0] }}" {{ 'selected' if v|string == c[0]|string }}>{{ c[1] }}</option>
+            {% else %}
+              <option value="{{ c }}" {{ 'selected' if v|string == c|string }}>{{ c }}</option>
+            {% endif %}
+          {% endfor %}
+        </select>
+      {% elif f.type == 'textarea' %}
+        <textarea name="{{ f.name }}" rows="3" {{ 'required' if f.required }}
+                  class="w-full border rounded px-3 py-2 text-sm">{{ v }}</textarea>
+      {% elif f.type == 'date' %}
+        <input type="date" name="{{ f.name }}" value="{{ v }}" {{ 'required' if f.required }}
+               class="w-full border rounded px-3 py-2 text-sm">
+      {% else %}
+        <input type="{{ f.type or 'text' }}" name="{{ f.name }}" value="{{ v }}"
+               step="{{ f.step if f.step }}" placeholder="{{ f.placeholder if f.placeholder }}"
+               {{ 'required' if f.required }}
+               class="w-full border rounded px-3 py-2 text-sm">
+      {% endif %}
+    </div>
+    {% endfor %}
+    <div class="md:col-span-2 flex gap-3 pt-2">
+      <button class="bg-brand-600 hover:bg-brand-700 text-white rounded px-6 py-2 text-sm font-medium">Save</button>
+      <a href="{{ cancel_url }}" class="bg-slate-200 hover:bg-slate-300 rounded px-6 py-2 text-sm">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

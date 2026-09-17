@@ -1,0 +1,34 @@
+<nav class="w-60 shrink-0 bg-brand-700 text-white flex flex-col">
+  <div class="px-4 py-5">
+    <h1 class="text-lg font-bold leading-tight">{{ app_settings.store_name if app_settings else "Aflatoon Studio" }}</h1>
+    <p class="text-xs text-indigo-200">Thrift Store Manager</p>
+  </div>
+  <div class="flex-1 overflow-y-auto px-2 pb-4 space-y-1 text-sm">
+    <a href="{{ url_for('dashboard.index') }}" class="block px-3 py-2 rounded hover:bg-brand-600">Dashboard</a>
+    <div class="pt-3 px-3 text-xs uppercase tracking-wider text-indigo-300">Inventory</div>
+    <a href="{{ url_for('items.index') }}" class="block px-3 py-2 rounded hover:bg-brand-600">Items</a>
+    <a href="{{ url_for('batches.index') }}" class="block px-3 py-2 rounded hover:bg-brand-600">Purchase Batches</a>
+    <a href="{{ url_for('adjustments.index') }}" class="block px-3 py-2 rounded hover:bg-brand-600">Stock Adjustments</a>
+    <div class="pt-3 px-3 text-xs uppercase tracking-wider text-indigo-300">Money</div>
+    <a href="{{ url_for('sales.index') }}" class="block px-3 py-2 rounded hover:bg-brand-600">Sales Entry</a>
+    <a href="{{ url_for('expenses.index') }}" class="block px-3 py-2 rounded hover:bg-brand-600">Expenses</a>
+    <a href="{{ url_for('cash.index') }}" class="block px-3 py-2 rounded hover:bg-brand-600">Cash & Bank</a>
+    <a href="{{ url_for('emi.index') }}" class="block px-3 py-2 rounded hover:bg-brand-600">EMI Tracker</a>
+    <div class="pt-3 px-3 text-xs uppercase tracking-wider text-indigo-300">Planning</div>
+    <a href="{{ url_for('budgets.index') }}" class="block px-3 py-2 rounded hover:bg-brand-600">Monthly Budgets</a>
+    <a href="{{ url_for('reports.target') }}" class="block px-3 py-2 rounded hover:bg-brand-600">Targets & Forecast</a>
+    <div class="pt-3 px-3 text-xs uppercase tracking-wider text-indigo-300">Reports</div>
+    <a href="{{ url_for('reports.stock') }}" class="block px-3 py-2 rounded hover:bg-brand-600">Stock Summary</a>
+    <a href="{{ url_for('reports.sales_analysis') }}" class="block px-3 py-2 rounded hover:bg-brand-600">Sales Analysis</a>
+    <a href="{{ url_for('reports.profit') }}" class="block px-3 py-2 rounded hover:bg-brand-600">Profit & Cash</a>
+    <a href="{{ url_for('reports.restock') }}" class="block px-3 py-2 rounded hover:bg-brand-600">Restock Intelligence</a>
+    <a href="{{ url_for('reports.major_restock') }}" class="block px-3 py-2 rounded hover:bg-brand-600">Major Restock</a>
+    <a href="{{ url_for('reports.data_quality') }}" class="block px-3 py-2 rounded hover:bg-brand-600">Data Quality</a>
+    <div class="pt-3 px-3 text-xs uppercase tracking-wider text-indigo-300">Manage</div>
+    <a href="{{ url_for('suppliers.index') }}" class="block px-3 py-2 rounded hover:bg-brand-600">Suppliers</a>
+    <a href="{{ url_for('settings_view.index') }}" class="block px-3 py-2 rounded hover:bg-brand-600">Settings</a>
+  </div>
+  <div class="px-4 py-3 border-t border-brand-600 text-xs">
+    <a href="{{ url_for('auth.logout') }}" class="text-indigo-200 hover:text-white">Log out</a>
+  </div>
+</nav>

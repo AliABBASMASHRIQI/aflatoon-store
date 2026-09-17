@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-bold">Owner Dashboard</h1>
+  <span class="text-sm text-slate-500">{{ d.today.strftime('%A, %d %b %Y') }}</span>
+</div>
+
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+  <div class="bg-white rounded-lg shadow p-5">
+    <div class="text-sm text-slate-500">Today's Sales</div>
+    <div class="text-2xl font-bold text-brand-600 mt-1">{{ d.today_sales|money }}</div>
+  </div>
+  <div class="bg-white rounded-lg shadow p-5">
+    <div class="text-sm text-slate-500">This Month Sales</div>
+    <div class="text-2xl font-bold mt-1">{{ d.month_sales|money }}</div>
+  </div>
+  <div class="bg-white rounded-lg shadow p-5">
+    <div class="text-sm text-slate-500">Monthly Target</div>
+    <div class="text-2xl font-bold mt-1">{{ d.target|money }}</div>
+  </div>
+  <div class="bg-white rounded-lg shadow p-5">
+    <div class="text-sm text-slate-500">Achievement</div>
+    <div class="text-2xl font-bold mt-1 {{ 'text-emerald-600' if d.achievement >= 1 else 'text-amber-600' }}">
+      {{ d.achievement|pct }}
+    </div>
+  </div>
+</div>
+
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+  <div class="bg-white rounded-lg shadow p-5">
+    <div class="text-sm text-slate-500">Month-End Forecast</div>
+    <div class="text-2xl font-bold mt-1">{{ d.forecast|money }}</div>
+  </div>
+  <div class="bg-white rounded-lg shadow p-5">
+    <div class="text-sm text-slate-500">Gross Profit MTD</div>
+    <div class="text-2xl font-bold text-emerald-600 mt-1">{{ d.gp_mtd|money }}</div>
+  </div>
+  <div class="bg-white rounded-lg shadow p-5">
+    <div class="text-sm text-slate-500">Expenses MTD</div>
+    <div class="text-2xl font-bold text-red-600 mt-1">{{ d.expenses_mtd|money }}</div>
+  </div>
+  <div class="bg-white rounded-lg shadow p-5">
+    <div class="text-sm text-slate-500">Owner Cash / Savings MTD</div>
+    <div class="text-2xl font-bold mt-1">{{ d.owner_cash_savings_mtd|money }}</div>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  <div class="bg-white rounded-lg shadow p-5">
+    <h2 class="font-semibold mb-3">Target Gap & Decision View</h2>
+    <dl class="space-y-2 text-sm">
+      <div class="flex justify-between"><dt class="text-slate-500">Remaining to target</dt><dd>{{ d.target_gap|money }}</dd></div>
+      <div class="flex justify-between"><dt class="text-slate-500">Next month forecast</dt><dd>{{ summary.next_month_forecast|money }}</dd></div>
+      <div class="flex justify-between"><dt class="text-slate-500">12-month forecast total</dt><dd>{{ summary.twelve_month_total|money }}</dd></div>
+      <div class="flex justify-between"><dt class="text-slate-500">Restock fund rate</dt><dd>{{ d.restock_pct|pct }}</dd></div>
+      <div class="flex justify-between"><dt class="text-slate-500">Major restock reserve rate</dt><dd>{{ d.major_restock_pct|pct }}</dd></div>
+      <div class="flex justify-between"><dt class="text-slate-500">Owner cash / savings target</dt><dd>{{ d.owner_cash_target_pct|pct }}</dd></div>
+    </dl>
+  </div>
+
+  <div class="bg-white rounded-lg shadow p-5">
+    <h2 class="font-semibold mb-3">Owner Alerts</h2>
+    <ul class="space-y-2 text-sm">
+      <li>EMIs due soon: <strong class="{{ 'text-red-600' if d.emi_due else 'text-slate-600' }}">{{ d.emi_due }}</strong> — <a class="text-brand-600 underline" href="{{ url_for('emi.index') }}">view</a></li>
+      <li>Critical stock items: <strong class="{{ 'text-red-600' if d.critical_stock else 'text-slate-600' }}">{{ d.critical_stock }}</strong> — <a class="text-brand-600 underline" href="{{ url_for('reports.stock') }}">view</a></li>
+      <li>Low stock items: <strong class="{{ 'text-amber-600' if d.low_stock else 'text-slate-600' }}">{{ d.low_stock }}</strong></li>
+      <li>Over-budget months: <strong class="{{ 'text-red-600' if d.over_budget else 'text-slate-600' }}">{{ d.over_budget }}</strong> — <a class="text-brand-600 underline" href="{{ url_for('budgets.index') }}">view</a></li>
+      <li>Data quality issues: <strong class="{{ 'text-red-600' if d.quality_issues else 'text-slate-600' }}">{{ d.quality_issues }}</strong> — <a class="text-brand-600 underline" href="{{ url_for('reports.data_quality') }}">view</a></li>
+    </ul>
+  </div>
+
+  <div class="bg-white rounded-lg shadow p-5 lg:col-span-2">
+    <h2 class="font-semibold mb-3">Daily Workflow</h2>
+    <ol class="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+      <li class="border rounded p-3">1. <a class="text-brand-600 underline" href="{{ url_for('batches.create') }}">Add purchase batch</a></li>
+      <li class="border rounded p-3">2. <a class="text-brand-600 underline" href="{{ url_for('items.create') }}">Create item IDs</a> from the batch</li>
+      <li class="border rounded p-3">3. <a class="text-brand-600 underline" href="{{ url_for('sales.create') }}">Record each sale</a></li>
+      <li class="border rounded p-3">4. <a class="text-brand-600 underline" href="{{ url_for('expenses.create') }}">Record expenses</a></li>
+      <li class="border rounded p-3">5. <a class="text-brand-600 underline" href="{{ url_for('adjustments.create') }}">Stock corrections</a></li>
+      <li class="border rounded p-3">6. <a class="text-brand-600 underline" href="{{ url_for('emi.index') }}">Update EMI status</a></li>
+    </ol>
+  </div>
+</div>
+{% endblock %}
