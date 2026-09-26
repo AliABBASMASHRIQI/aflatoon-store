@@ -14,11 +14,27 @@ bp = Blueprint("cash", __name__, url_prefix="/cash")
 @login_required
 def index():
     led = cash_ledger_rows()
+    rows = [{
+        "id": r["id"],
+        "cells": [r["date"].strftime("%d %b %Y"), r["txn_id"], r["type"],
+                  r["description"] or "-",
+                  money(r["cash_in"]) if r["cash_in"] else "-",
+                  money(r["cash_out"]) if r["cash_out"] else "-",
+                  money(r["bank_in"]) if r["bank_in"] else "-",
+                  money(r["bank_out"]) if r["bank_out"] else "-",
+                  money(r["running_cash"]), money(r["running_bank"]),
+                  money(r["running_total"])],
+    } for r in led["rows"]]
+    last = led["rows"][-1] if led["rows"] else None
     return render_template(
         "cash.html",
-        rows=led["rows"],
+        rows=rows,
         starting_cash=led["starting_cash"],
         starting_bank=led["starting_bank"],
+        closing_cash=last["running_cash"] if last else led["starting_cash"],
+        closing_bank=last["running_bank"] if last else led["starting_bank"],
+        closing_total=(last["running_total"] if last
+                       else led["starting_cash"] + led["starting_bank"]),
         new_url=url_for("cash.create"),
     )
 

@@ -3,50 +3,102 @@
 <div class="topbar">
   <div>
     <h1>Monthly Budget</h1>
-    <div class="sub">
-      {% if view_month %}{{ view_month }}{% else %}{{ today.strftime('%B %Y') if today }}{% endif %}
-    </div>
+    <div class="sub">Plan each spending category, then watch actual against plan</div>
   </div>
   <div class="actions">
     <a class="btn primary" href="{{ url_for('budgets.create') }}">+ Set Budget</a>
   </div>
 </div>
 
-{% if block %}
-  {% for b in block %}
-  <div class="card panel budget-section">
-    <div class="panel-head">
-      <h3>{{ b.title }}</h3>
-      {% if b.total %}<div class="total">{{ money(b.total.value) }}</div>{% endif %}
-    </div>
-    {% if b.rows %}
-    <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>{% for h in headers if h != 'cat_fields' %}<th>{{ h }}</th>{% endfor %}</tr>
-      </thead>
-      <tbody>
-        {% for r in b.rows %}
-        <tr>
-          {% for c in r.cells %}<td>{{ c }}</td>{% endfor %}
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    </div>
-    {% endif %}
+<div class="month-nav">
+  <a class="btn ghost sm" href="{{ url_for('budgets.index', month=prev_month.isoformat()) }}">&larr; {{ prev_month.strftime('%b %Y') }}</a>
+  <span class="month-now">{{ view_month.strftime('%B %Y') }}</span>
+  <a class="btn ghost sm" href="{{ url_for('budgets.index', month=next_month.isoformat()) }}">{{ next_month.strftime('%b %Y') }} &rarr;</a>
+</div>
+
+{% if block and block.rows %}
+<div class="card">
+  <div class="panel-head">
+    <h3>{{ block.month.strftime('%B %Y') }} plan</h3>
+    <span class="pill {{ 'bad' if block.status == 'OVER BUDGET' else 'ok' }}">{{ block.status }}</span>
   </div>
-  {% endfor %}
+
+  <div class="cat-grid">
+    {% for r in block.rows %}
+    <div class="cat">
+      <div class="cat-label">{{ r.label }}</div>
+      <div class="cat-value">{{ r.budgeted|money }}</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="totals">
+    <div><dt>Budgeted</dt><dd>{{ block.total_budget|money }}</dd></div>
+    <div><dt>Actual spent</dt><dd>{{ block.total_actual|money }}</dd></div>
+    <div><dt>{{ 'Over by' if block.total_remaining < 0 else 'Left' }}</dt>
+      <dd class="{{ 'bad' if block.total_remaining < 0 else 'ok' }}">
+        {{ (block.total_remaining|abs)|money }}</dd></div>
+  </div>
+  {% if block.status == 'OVER BUDGET' %}
+  <a class="btn ghost sm" href="{{ url_for('budgets.edit', bid=block.id) }}">Edit this plan</a>
+  {% endif %}
+</div>
 {% else %}
-<div class="card panel">
-  <div class="panel-head"><h3>No budget set</h3></div>
-  <div class="empty">No budget configured for this month yet — click "Set Budget" to define it.</div>
+<div class="card">
+  <div class="empty">No budget set for {{ view_month.strftime('%B %Y') }} yet.
+    Use &ldquo;Set Budget&rdquo; to plan the month.</div>
 </div>
 {% endif %}
+
+{% if rows %}
+<div class="section-title">All months</div>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      {% for h in headers %}<th>{{ h }}</th>{% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>
+      {% for cell in row.cells %}<td>{{ cell }}</td>{% endfor %}
+      <td class="nowrap">
+        <a class="action-link" href="{{ url_for('budgets.edit', bid=row.id) }}">Edit</a>
+        <form method="post" class="inline" action="{{ url_for('budgets.delete', bid=row.id) }}"
+              onsubmit="return confirm('Delete this budget?');">
+          <button type="submit" class="action-link danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="tip">&ldquo;Actual&rdquo; comes from the <a href="{{ url_for('expenses.index') }}">Expenses</a>
+  page, so it only counts what has been recorded as spent.</p>
+{% endif %}
+
 <style>
-  .budget-section{margin-bottom:18px}
-  .panel-head{display:flex;align-items:center;justify-content:space-between}
-  .panel-head h3{margin:0;font-size:15.5px}
-  .total{font-weight:700;color:var(--brand)}
+  .month-nav{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:16px}
+  .month-now{font-weight:700;font-size:15px}
+  .cat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;
+            margin-bottom:16px}
+  .cat{background:#faf9f8;border:1px solid var(--line);border-radius:9px;padding:10px 12px}
+  .cat-label{font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+  .cat-value{font-weight:700;font-size:15px;margin-top:3px}
+  .totals{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;
+          border-top:1px solid var(--line);padding-top:14px;margin-bottom:14px}
+  .totals dt{font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+  .totals dd{margin:3px 0 0;font-size:18px;font-weight:700}
+  .totals dd.ok{color:var(--ok)} .totals dd.bad{color:var(--err)}
+  .pill{font-size:12px;font-weight:700;padding:4px 10px;border-radius:99px}
+  .pill.ok{background:#f0fdf4;color:var(--ok)} .pill.bad{background:#fef2f2;color:var(--err)}
+  .nowrap{white-space:nowrap}
+  .action-link{color:var(--brand);text-decoration:none;font-size:13px;margin-right:10px;
+    background:none;border:0;cursor:pointer;padding:0;font-family:inherit}
+  .action-link.danger{color:var(--err)}
+  form.inline{display:inline}
+  .tip{font-size:12.5px;color:var(--muted);margin-top:10px}
 </style>
 {% endblock %}

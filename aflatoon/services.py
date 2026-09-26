@@ -74,8 +74,8 @@ def get_settings() -> Settings:
         s.planning_sales_good = Decimal("150000")
         s.initial_stock_estimate = 0
         s.est_new_items_per_month = 175
-        s.restock_pct = Decimal("0")
-        s.major_restock_pct = Decimal("0")
+        s.restock_pct = Decimal("0.10")
+        s.major_restock_pct = Decimal("0.20")
         s.owner_cash_target_pct = Decimal("0.10")
         s.critical_coverage_days = 14
         s.low_coverage_days = 30
@@ -206,19 +206,22 @@ def projection_summary() -> dict:
 # ----------------------------------------------------------------------------
 
 def budget_data() -> list:
-    """Rows for the budgets index (one per monthly budget)."""
+    """Rows for the budgets index (one per monthly budget).
+
+    Returns raw numbers - the view layer applies money formatting.
+    """
     out = []
     for b in MonthlyBudget.query.order_by(MonthlyBudget.month.desc()).all():
-        cells = [b.month.strftime("%b %Y")]
-        for fname, _label in BUDGET_CATEGORY_FIELDS:
-            cells.append(float(getattr(b, fname) or 0))
         total = float(b.total_budget or 0)
         actual = float(b.actual or 0)
-        cells += [total, actual, total - actual,
-                  "OVER BUDGET" if actual > total else "OK"]
         out.append({
             "id": b.id,
-            "cells": cells,
+            "month": b.month,
+            "budgets": [float(getattr(b, f) or 0) for f, _ in BUDGET_CATEGORY_FIELDS],
+            "total": total,
+            "actual": actual,
+            "remaining": total - actual,
+            "status": "OVER BUDGET" if actual > total else "OK",
         })
     return out
 
@@ -243,6 +246,7 @@ def budget_category_block(month: date) -> dict:
     total_budget = float(b.total_budget or 0)
     actual = float(b.actual or 0)
     return {
+        "id": b.id,
         "month": start,
         "rows": rows,
         "total_budget": total_budget,
@@ -269,6 +273,7 @@ def cash_ledger_rows() -> dict:
         cash += float(t.cash_in or 0) - float(t.cash_out or 0)
         bank += float(t.bank_upi_in or 0) - float(t.bank_upi_out or 0)
         rows.append({
+            "id": t.id,
             "date": t.date,
             "txn_id": t.txn_id,
             "type": t.txn_type or "",

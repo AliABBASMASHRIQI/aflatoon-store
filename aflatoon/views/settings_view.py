@@ -25,28 +25,52 @@ def index():
 
 
 def resolve(s: Settings, form):
-    s.store_name = form.get("store_name") or "Aflatoon Studio"
-    s.store_type = form.get("store_type") or ""
-    s.currency = form.get("currency") or "INR"
-    s.planning_sales_bad = to_float(form.get("planning_sales_bad"))
-    s.planning_sales_normal = to_float(form.get("planning_sales_normal"))
-    s.planning_sales_good = to_float(form.get("planning_sales_good"))
-    s.initial_stock_estimate = int(to_float(form.get("initial_stock_estimate")))
-    s.est_new_items_per_month = int(to_float(form.get("est_new_items_per_month")))
-    s.restock_pct = to_float(form.get("restock_pct")) / 100
-    s.major_restock_pct = to_float(form.get("major_restock_pct")) / 100
-    s.owner_cash_target_pct = to_float(form.get("owner_cash_target_pct")) / 100
-    s.critical_coverage_days = int(to_float(form.get("critical_coverage_days"), 14))
-    s.low_coverage_days = int(to_float(form.get("low_coverage_days"), 30))
-    s.slow_moving_days = int(to_float(form.get("slow_moving_days"), 60))
-    s.dead_stock_days = int(to_float(form.get("dead_stock_days"), 90))
-    s.emi_alert_days = int(to_float(form.get("emi_alert_days"), 5))
-    s.starting_cash = to_float(form.get("starting_cash"))
-    s.starting_bank_upi = to_float(form.get("starting_bank_upi"))
-    new_user = (form.get("admin_user") or "").strip()
-    new_pass = form.get("admin_password")
-    if new_user:
-        s.admin_user = new_user
+    """Apply the settings form.
+
+    Only fields actually present in the submitted form are written. An earlier
+    version rewrote every column from the form, so saving the page silently
+    reset the thresholds, alert days and opening balances to 0.
+    """
+    def has(name):
+        return name in form
+
+    def txt(name, default=None):
+        return (form.get(name) or "").strip() if has(name) else default
+
+    def num(name, cast, default):
+        if not has(name):
+            return default
+        raw = (form.get(name) or "").strip()
+        return cast(raw) if raw else default
+
+    s.store_name = txt("store_name", s.store_name) or "Aflatoon Studio"
+    s.store_type = txt("store_type", s.store_type)
+    s.currency = txt("currency", s.currency) or "INR"
+
+    # the form sends percentages as whole numbers (10 = 10%)
+    for field in ("restock_pct", "major_restock_pct", "owner_cash_target_pct"):
+        if has(field):
+            raw = (form.get(field) or "").strip()
+            setattr(s, field, to_float(raw) / 100.0 if raw else 0)
+
+    for field in ("planning_sales_bad", "planning_sales_normal",
+                  "planning_sales_good", "starting_cash", "starting_bank_upi"):
+        val = num(field, to_float, getattr(s, field))
+        if val is not None:
+            setattr(s, field, val)
+
+    for field in ("initial_stock_estimate", "est_new_items_per_month",
+                  "critical_coverage_days", "low_coverage_days",
+                  "slow_moving_days", "dead_stock_days", "emi_alert_days"):
+        val = num(field, lambda v: int(to_float(v)), getattr(s, field))
+        if val is not None:
+            setattr(s, field, val)
+
+    if has("admin_user"):
+        new_user = (form.get("admin_user") or "").strip()
+        if new_user:
+            s.admin_user = new_user
+    new_pass = form.get("admin_password") if has("admin_password") else None
     if new_pass:
         s.set_password(new_pass)
     return s

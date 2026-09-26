@@ -2,17 +2,29 @@
 {% block content %}
 <div class="topbar">
   <div>
-    <h1>Cash · Bank · UPI</h1>
-    <div class="sub">Daily ledger of cash, bank & UPI movements</div>
+    <h1>Cash &middot; Bank &middot; UPI</h1>
+    <div class="sub">Every movement in and out, with a running balance</div>
   </div>
   <div class="actions">
-    <a class="btn primary" href="{{ new_url or url_for('cash.create') }}">+ New Entry</a>
+    <a class="btn primary" href="{{ new_url }}">+ New Entry</a>
   </div>
 </div>
 
-<div class="grid">
-  <div class="kpi"><div class="label">Cash on Hand</div><div class="value">{{ starting_cash }}</div></div>
-  <div class="kpi"><div class="label">Bank Balance</div><div class="value">{{ starting_bank }}</div></div>
+<div class="grid kpis">
+  <div class="kpi">
+    <div class="label">Cash on hand</div>
+    <div class="value">{{ closing_cash|money }}</div>
+    <div class="hint">opened at {{ starting_cash|money }}</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Bank / UPI</div>
+    <div class="value">{{ closing_bank|money }}</div>
+    <div class="hint">opened at {{ starting_bank|money }}</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Total liquid</div>
+    <div class="value ok">{{ closing_total|money }}</div>
+  </div>
 </div>
 
 {% if rows %}
@@ -20,23 +32,44 @@
 <table>
   <thead>
     <tr>
-      {% for h in headers %}<th>{{ h }}</th>{% endfor %}
+      <th>Date</th><th>ID</th><th>Type</th><th>Description</th>
+      <th class="r">Cash In</th><th class="r">Cash Out</th>
+      <th class="r">Bank In</th><th class="r">Bank Out</th>
+      <th class="r">Cash</th><th class="r">Bank</th><th class="r">Total</th>
+      <th>Actions</th>
     </tr>
   </thead>
   <tbody>
-    {% for r in rows %}
+    {% for row in rows %}
     <tr>
-      {% for cell in r.cells %}<td>{{ cell }}</td>{% endfor %}
+      {% for cell in row.cells %}<td class="{{ 'r' if loop.index >= 5 }}">{{ cell }}</td>{% endfor %}
+      <td class="nowrap">
+        <a class="action-link" href="{{ url_for('cash.edit', txn_id=row.id) }}">Edit</a>
+        <form method="post" class="inline" action="{{ url_for('cash.delete', txn_id=row.id) }}"
+              onsubmit="return confirm('Delete this transaction?');">
+          <button type="submit" class="action-link danger">Delete</button>
+        </form>
+      </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
 </div>
+<p class="tip">Running balances are calculated from the opening balances in
+  <a href="{{ url_for('settings_view.index') }}">Settings</a>, oldest first.</p>
 {% else %}
-<div class="empty no-data">No ledger entries yet — add your first cash/bank/UPI movement above.</div>
+<div class="empty">No entries yet. Use &ldquo;New Entry&rdquo; for the first
+  movement &mdash; or record opening balances in Settings first.</div>
 {% endif %}
 
 <style>
-  .no-data{padding:36px;text-align:center;color:var(--muted)}
+  .table-wrap td.r, .table-wrap th.r{text-align:right}
+  .nowrap{white-space:nowrap}
+  .action-link{color:var(--brand);text-decoration:none;font-size:13px;margin-right:10px;
+    background:none;border:0;cursor:pointer;padding:0;font-family:inherit}
+  .action-link:hover{text-decoration:underline}
+  .action-link.danger{color:var(--err)}
+  form.inline{display:inline}
+  .tip{font-size:12.5px;color:var(--muted);margin-top:10px}
 </style>
 {% endblock %}

@@ -38,7 +38,7 @@ def _field_spec():
     return [
         {"name": "adjustment_date", "label": "Adjustment Date", "type": "date", "required": True},
         {"name": "item_sel", "label": "Item (ID - Description)", "type": "select",
-         "choices": [(i, f"{i} - {d}") for i, d in items]},
+         "choices": [(i, f"{i} - {(d or 'untagged')[:40]}") for i, d in items]},
         {"name": "adjustment_type", "label": "Adjustment Type", "type": "select",
          "choices": ADJUSTMENT_TYPES},
         {"name": "qty_change", "label": "Qty Change (negative = reduce)", "type": "number", "step": "1"},

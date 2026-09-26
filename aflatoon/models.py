@@ -8,12 +8,15 @@ from aflatoon.extensions import db
 # Dropdown list values (mirror of the LISTS sheet)
 # ---------------------------------------------------------------------------
 CATEGORIES = ["Shirts", "T-Shirts", "Jeans", "Trousers", "Jackets", "Kurtas",
-              "Dresses", "Other Clothing", "Non-Clothing"]
+              "Dresses", "Shoes", "Accessories", "Bags & Luggage", "Soft Toys",
+              "Vintage / Collectibles", "Home Decor", "Other Clothing",
+              "Non-Clothing"]
 ITEM_TYPES = ["Clothing", "Non-Clothing"]
 BRAND_TYPES = ["Thrifted Brand", "Homegrown Brand", "Unbranded", "Vintage/Unknown", "Other"]
 PAYMENT_METHODS = ["Cash", "UPI", "Card", "Credit/Outstanding", "Other"]
 EXPENSE_CATEGORIES = ["Rent", "Salary", "Electricity", "Packaging", "Repairs", "Transportation",
-                      "Tea/Food", "Marketing", "Ads", "Trash/Cleaning", "Stationery", "Other"]
+                      "Tea/Food", "Marketing", "Ads", "Trash/Cleaning", "Stationery",
+                      "Transport/Delivery", "Storage", "Other"]
 EXPENSE_NATURES = ["Fixed", "Variable"]
 ITEM_STATUSES = ["Unprocessed", "Processing", "Ready for Sale", "Reserved", "Sold",
                  "Returned", "Damaged", "Lost"]
@@ -55,8 +58,8 @@ class Settings(db.Model):
     initial_stock_estimate = db.Column(db.Integer, default=0)
     est_new_items_per_month = db.Column(db.Integer, default=175)
 
-    restock_pct = db.Column(db.Numeric(6, 4), default=0)
-    major_restock_pct = db.Column(db.Numeric(6, 4), default=0)
+    restock_pct = db.Column(db.Numeric(6, 4), default=0.10)
+    major_restock_pct = db.Column(db.Numeric(6, 4), default=0.20)
     owner_cash_target_pct = db.Column(db.Numeric(6, 4), default=0.10)
 
     critical_coverage_days = db.Column(db.Integer, default=14)

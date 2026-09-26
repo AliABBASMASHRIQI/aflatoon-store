@@ -13,15 +13,25 @@ bp = Blueprint("budgets", __name__, url_prefix="/budgets")
 @bp.route("/")
 @login_required
 def index():
+    from dateutil.relativedelta import relativedelta
+
     today = _date.today()
-    view_month_str = request.args.get("month")
-    view_month = to_date(view_month_str) if view_month_str else today
+    view_month = to_date(request.args.get("month")) if request.args.get("month") else today
     view_month = first_of_month(view_month)
     block = budget_category_block(view_month)
-    rows = budget_data()
+    raw = budget_data()
 
     headers = ["Month"] + [label for _f, label in BUDGET_CATEGORY_FIELDS] + \
-              ["Total", "Actual", "Remaining", "Status"]
+              ["Total", "Actual", "Remaining", "Status", ""]
+    rows = []
+    for r in raw:
+        cells = [r["month"].strftime("%b %Y")]
+        cells += [money(v) if v else "-" for v in r["budgets"]]
+        cells += [money(r["total"]), money(r["actual"]),
+                  money(r["remaining"]), r["status"], ""]
+        rows.append({"id": r["id"], "cells": cells,
+                     "status": r["status"], "month": r["month"]})
+
     return render_template(
         "budget.html",
         rows=rows,
@@ -30,9 +40,9 @@ def index():
         cat_fields=BUDGET_CATEGORY_FIELDS,
         view_month=view_month,
         today=today,
+        prev_month=first_of_month(view_month - relativedelta(months=1)),
+        next_month=first_of_month(view_month + relativedelta(months=1)),
         money=money,
-        first_of_month=first_of_month,
-        end_of_month=end_of_month,
     )
 
 
@@ -59,7 +69,7 @@ def create():
                     db.session.rollback()
                     flash(f"Error: {e}", "danger")
     values = {"month": first_of_month(_date.today()).isoformat()}
-    return render_template("budget_form.html", form_title="Add Monthly Budget",
+    return render_template("form.html", form_title="Add Monthly Budget",
                            fields=budget_field_spec(), values=values,
                            cancel_url=url_for("budgets.index"))
 
@@ -80,7 +90,7 @@ def edit(bid):
     values = {"month": date_input(b.month)}
     for fname, _label in BUDGET_CATEGORY_FIELDS:
         values[fname] = getattr(b, fname) or ""
-    return render_template("budget_form.html",
+    return render_template("form.html",
                            form_title=f"Edit Budget {b.month.strftime('%b %Y')}",
                            fields=budget_field_spec(), values=values,
                            cancel_url=url_for("budgets.index"))

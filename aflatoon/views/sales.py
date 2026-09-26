@@ -31,7 +31,8 @@ def index():
         rows=[{
             "id": s.id,
             "cells": [s.sale_date.strftime("%d %b %Y"), s.bill_id or "-",
-                      f"{s.item.item_id} - {s.item.description[:25]}" if s.item else "?",
+                      f"{s.item.item_id} - {(s.item.description or 'no description')[:25]}"
+                      if s.item else "?",
                       s.qty, money(s.final_value),
                       money(s.gross_profit) if s.gross_profit is not None else "-",
                       s.payment_method, "Yes" if s.is_returned else "No"],
@@ -51,7 +52,7 @@ def _field_spec():
         {"name": "sale_date", "label": "Sale Date", "type": "date", "required": True},
         {"name": "bill_id", "label": "Bill ID", "type": "text"},
         {"name": "item_sel", "label": "Item (ID - Description)", "type": "select",
-         "choices": [(i, f"{i} - {d} [{st}]") for i, d, st in items]},
+         "choices": [(i, f"{i} - {(d or 'untagged')[:40]} [{st}]") for i, d, st in items]},
         {"name": "qty", "label": "Qty", "type": "number", "step": "1"},
         {"name": "listed_price", "label": "Listed Price (₹)", "type": "number", "step": "0.01"},
         {"name": "discount", "label": "Discount (₹)", "type": "number", "step": "0.01"},
@@ -65,20 +66,27 @@ def _field_spec():
 def _resolve(sale, form):
     sale.sale_date = to_date(form.get("sale_date")) or _date.today()
     sale.bill_id = form.get("bill_id")
+    item = None
     if form.get("item_sel"):
         item = Item.query.filter_by(item_id=form.get("item_sel")).first()
-        sale.item_id = item.id if item else None
-    sale.qty = int(to_float(form.get("qty"), 1))
+    if item is None:
+        raise ValueError("Please pick a valid item.")
+    # assign the relationship, not just the id: a new Sale has no .item yet,
+    # so setting only item_id would leave sale.item as None below.
+    sale.item = item
+    sale.qty = max(int(to_float(form.get("qty"), 1)), 1)
     sale.listed_price = to_float(form.get("listed_price"))
     sale.discount = to_float(form.get("discount"))
     sale.payment_method = form.get("payment_method") or "Cash"
     sale.is_returned = (form.get("is_returned") == "Yes")
     sale.notes = form.get("notes")
-    if sale.item_id is None:
-        raise ValueError("Please pick a valid item.")
-    if sale.item_id and not sale.is_returned:
+    if not sale.is_returned:
         sale.item.current_status = "Sold"
         sale.item.date_sold = sale.sale_date
+    elif sale.item.current_status == "Sold":
+        # un-marking a return puts the piece back on the rail
+        sale.item.current_status = "Ready for Sale"
+        sale.item.date_sold = None
     return sale
 
 
@@ -106,10 +114,14 @@ def create():
 @login_required
 def edit(sale_id):
     sale = Sale.query.get_or_404(sale_id)
+    old_item = sale.item
     if request.method == "POST":
-        old_item = sale.item
         try:
             _resolve(sale, request.form)
+            # changing which piece was sold frees the previous one
+            if old_item and old_item.id != sale.item_id and not sale.is_returned:
+                old_item.current_status = "Ready for Sale"
+                old_item.date_sold = None
             db.session.commit()
             flash("Sale updated.", "success")
             return redirect(url_for("sales.index"))
@@ -137,7 +149,17 @@ def edit(sale_id):
 def delete(sale_id):
     sale = Sale.query.get_or_404(sale_id)
     item = sale.item
+    was_returned = sale.is_returned
     db.session.delete(sale)
+    # a deleted sale means the piece is back on the rail
+    if item and not was_returned and item.current_status == "Sold":
+        remaining = Sale.query.filter(
+            Sale.item_id == item.id,
+            Sale.id != sale_id,
+            Sale.is_returned.is_(False)).count()
+        if remaining == 0:
+            item.current_status = "Ready for Sale"
+            item.date_sold = None
     db.session.commit()
     flash("Sale deleted.", "info")
     return redirect(url_for("sales.index"))

@@ -200,7 +200,137 @@ def main():
             print(f"  MISS  {url:<22} {label}   (looking for {needle!r})")
             cfail += 1
     print(f"\n{len(checks) - cfail}/{len(checks)} content checks passed")
-    return 1 if (bad or cfail) else 0
+
+    # ---- behaviour checks: does it actually do the right thing? ------------
+    print("\nbehaviour checks")
+    from datetime import date as _date
+    from aflatoon.models import Settings, Item, Sale
+    bfail = 0
+
+    def bcheck(label, cond, detail=""):
+        nonlocal bfail
+        if cond:
+            print(f"  ok    {label}")
+        else:
+            print(f"  FAIL  {label} {detail}")
+            bfail += 1
+
+    # 1. full settings save must persist
+    with app.app_context():
+        s0 = Settings.query.first()
+        keep = (s0.critical_coverage_days, s0.emi_alert_days)
+    client.post("/settings/", data={
+        "store_name": "Aflatoon Studio", "store_type": "test", "currency": "INR",
+        "planning_sales_bad": "40000", "planning_sales_normal": "90000",
+        "planning_sales_good": "140000", "starting_cash": "1234.50",
+        "starting_bank_upi": "500", "restock_pct": "12", "major_restock_pct": "20",
+        "owner_cash_target_pct": "10", "critical_coverage_days": "11",
+        "low_coverage_days": "22", "slow_moving_days": "55", "dead_stock_days": "77",
+        "est_new_items_per_month": "150", "initial_stock_estimate": "0",
+        "emi_alert_days": "6", "admin_user": "admin",
+    }, follow_redirects=True)
+    with app.app_context():
+        s1 = Settings.query.first()
+        bcheck("settings: threshold saved", s1.critical_coverage_days == 11,
+               f"got {s1.critical_coverage_days}")
+        bcheck("settings: opening cash saved", float(s1.starting_cash) == 1234.50,
+               f"got {s1.starting_cash}")
+        bcheck("settings: percent converted once",
+               abs(float(s1.restock_pct) - 0.12) < 1e-6, f"got {s1.restock_pct}")
+        bcheck("settings: password untouched by blank field",
+               s1.check_password(PASSWORD))
+
+    # 2. a partial save must NOT wipe the other fields  (the original bug)
+    client.post("/settings/", data={"store_name": "Renamed Store"},
+                follow_redirects=True)
+    with app.app_context():
+        s2 = Settings.query.first()
+        bcheck("settings: partial save keeps thresholds",
+               s2.critical_coverage_days == 11, f"got {s2.critical_coverage_days}")
+        bcheck("settings: partial save keeps opening cash",
+               float(s2.starting_cash) == 1234.50, f"got {s2.starting_cash}")
+        bcheck("settings: partial save applies what was sent",
+               s2.store_name == "Renamed Store", f"got {s2.store_name}")
+    client.post("/settings/", data={"store_name": "Aflatoon Studio"},
+                follow_redirects=True)
+
+    # 3. bulk entry creates one item per filled row and skips blanks
+    with app.app_context():
+        n_before = Item.query.count()
+    rows = {"row_count": "6",
+            "item_type": "Clothing", "brand_type": "Thrifted Brand",
+            "default_category": "Shirts", "current_status": "Ready for Sale",
+            "purchase_date": _date.today().isoformat(),
+            # rows 0,1,3 filled; 2,4,5 left blank
+            "r0_size": "M", "r0_cost": "100", "r0_listed": "250",
+            "r1_size": "L", "r1_cost": "120", "r1_listed": "300",
+            "r3_size": "S", "r3_cost": "80", "r3_listed": "200",
+            }
+    client.post("/items/bulk", data=rows, follow_redirects=True)
+    with app.app_context():
+        n_after = Item.query.count()
+        bcheck("bulk: created 3 items from 6 rows", n_after - n_before == 3,
+               f"created {n_after - n_before}")
+        newest = Item.query.order_by(Item.id.desc()).first()
+        first_made = Item.query.order_by(Item.id.desc()).offset(2).first()
+        bcheck("bulk: default category applied",
+               newest.category == "Shirts", f"got {newest.category}")
+        bcheck("bulk: per-row cost stored (row 0)",
+               float(first_made.allocated_cost) == 100,
+               f"got {first_made.allocated_cost}")
+        bcheck("bulk: per-row size stored",
+               first_made.size == "M", f"got {first_made.size}")
+        bcheck("bulk: codes are sequential AFL-#####",
+               newest.item_id.startswith("AFL-"), f"got {newest.item_id}")
+        bulk_ids = [i.item_id for i in Item.query.order_by(Item.id.desc()).limit(3).all()]
+
+    # 4. recording a sale must flip the item to Sold
+    with app.app_context():
+        target = Item.query.filter(Item.item_id == bulk_ids[0]).first()
+        tid, was_sold = target.id, target.current_status
+    client.post("/sales/new", data={
+        "sale_date": _date.today().isoformat(), "bill_id": "B-TEST",
+        "item_sel": bulk_ids[0], "qty": "1", "listed_price": "250",
+        "discount": "0", "payment_method": "Cash", "is_returned": "No",
+    }, follow_redirects=True)
+    with app.app_context():
+        after = Item.query.get(tid)
+        bcheck("sale: item marked Sold", after.current_status == "Sold",
+               f"was {was_sold} now {after.current_status}")
+        bcheck("sale: sale row written",
+               Sale.query.filter_by(item_id=tid).count() == 1)
+        bcheck("sale: value computed", abs(float(
+            Sale.query.filter_by(item_id=tid).first().final_value) - 250) < 0.01)
+
+    # 5. deleting the sale must put the piece back on the rail
+    with app.app_context():
+        sale_id = Sale.query.filter_by(item_id=tid).first().id
+    client.post(f"/sales/{sale_id}/delete", data={}, follow_redirects=True)
+    with app.app_context():
+        freed = Item.query.get(tid)
+        bcheck("sale delete: piece back on the rail",
+               freed.current_status == "Ready for Sale",
+               f"got {freed.current_status}")
+        bcheck("sale delete: sale row gone",
+               Sale.query.filter_by(item_id=tid).count() == 0)
+
+    # 6. dashboard must now show the sale
+    dash = get("/")
+    bcheck("dashboard: reflects recorded sales", "No sales recorded yet" not in dash)
+
+    # 7. stock report picks up the new items
+    stock = get("/reports/stock")
+    bcheck("reports/stock: lists the new item", bulk_ids[0] in stock)
+    dq = get("/reports/data-quality")
+    bcheck("reports/data-quality: renders", "Severity" in dq or "Check" in dq)
+
+    # 8. budget screen renders the 12 categories
+    budget = get("/budgets/")
+    bcheck("budgets: shows a category", "Rent" in budget and "Salary" in budget)
+
+    total_b = 18
+    print(f"\n{total_b - bfail}/{total_b} behaviour checks passed")
+    return 1 if (bad or cfail or bfail) else 0
 
 
 if __name__ == "__main__":
