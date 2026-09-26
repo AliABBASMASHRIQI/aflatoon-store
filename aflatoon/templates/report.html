@@ -7,12 +7,11 @@
   </div>
   <div class="actions">
     {% if export_url %}<a class="btn ghost" href="{{ export_url }}">Export</a>{% endif %}
-    {% if back_url %}<a class="btn ghost" href="{{ back_url }}">Back</a>{% endif %}
   </div>
 </div>
 
 {% if kpis %}
-<div class="grid">
+<div class="grid kpis">
   {% for k in kpis %}
   <div class="kpi">
     <div class="label">{{ k.label }}</div>
@@ -25,13 +24,9 @@
 
 {% if summary %}
 <div class="card summary">
-  <div class="summary-row">
-    {% for k, v in summary.items() %}
-    <div class="s-item">
-      <span class="s-label">{{ k }}</span><span class="s-value">{{ v }}</span>
-    </div>
-    {% endfor %}
-  </div>
+  {% for k, v in summary.items() %}
+  <div class="s-item"><span class="s-label">{{ k }}</span><span class="s-value">{{ v }}</span></div>
+  {% endfor %}
 </div>
 {% endif %}
 
@@ -42,21 +37,26 @@
   <tbody>
     {% for row in rows %}
     <tr>
-      {% for cell in row.cells %}<td>{{ cell }}</td>{% endfor %}
+      {% for cell in row.cells %}
+      <td class="{{ 'r' if cell is number or (cell is string and cell.startswith('\u20b9')) }}">{{ cell }}</td>
+      {% endfor %}
     </tr>
     {% endfor %}
   </tbody>
 </table>
 </div>
-{% elif not kpis and not summary %}
-<p class="empty">No data to show.</p>
+{% else %}
+<div class="empty">
+  {% if kpis %}Nothing to show for this period yet.{% else %}
+    No data yet. This report fills in as you record sales, stock and expenses.{% endif %}
+</div>
 {% endif %}
 
 <style>
-  .summary{padding:18px 20px;margin-bottom:18px}
-  .summary-row{display:flex;flex-wrap:wrap;gap:22px}
+  .table-wrap td.r{text-align:right}
+  .summary{padding:16px 18px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:22px}
   .s-item{display:grid;gap:2px}
-  .s-label{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+  .s-label{font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
   .s-value{font-size:16px;font-weight:700}
 </style>
 {% endblock %}

@@ -16,6 +16,8 @@ env/
 skills/
 .opencode/skills/
 *.db
+server.log
+server.err
 instance/*
 !instance/.gitkeep
 .opencode/skills/

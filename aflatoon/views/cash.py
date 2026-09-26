@@ -42,8 +42,7 @@ def index():
 def _field_spec():
     return [
         {"name": "date", "label": "Date", "type": "date", "required": True},
-        {"name": "txn_type", "label": "Transaction Type", "type": "select",
-         "choices": TXN_TYPES},
+        {"name": "txn_type", "label": "Transaction Type", "type": "select", "choices": TXN_TYPES, "default": "Expense"},
         {"name": "description", "label": "Description", "type": "text"},
         {"name": "cash_in", "label": "Cash In (₹)", "type": "number", "step": "0.01"},
         {"name": "cash_out", "label": "Cash Out (₹)", "type": "number", "step": "0.01"},

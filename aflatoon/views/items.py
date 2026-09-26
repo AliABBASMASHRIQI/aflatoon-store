@@ -39,7 +39,7 @@ def _fields():
         {"name": "subcategory", "label": "Subcategory", "type": "text"},
         {"name": "supplier_sel", "label": "Supplier", "type": "select",
          "choices": [(s[0], s[0]) for s in suppliers], "optional": True},
-        {"name": "brand_type", "label": "Brand Type", "type": "select", "choices": BRAND_TYPES},
+        {"name": "brand_type", "label": "Brand Type", "type": "select", "choices": BRAND_TYPES, "default": "Other"},
         {"name": "brand_name", "label": "Brand Name", "type": "text"},
         {"name": "description", "label": "Description", "type": "textarea"},
         {"name": "size", "label": "Size", "type": "text"},

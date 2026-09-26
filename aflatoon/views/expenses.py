@@ -47,7 +47,7 @@ def _field_spec():
         {"name": "expense_date", "label": "Expense Date", "type": "date", "required": True},
         {"name": "category", "label": "Category", "type": "select",
          "choices": EXPENSE_CATEGORIES},
-        {"name": "nature", "label": "Nature", "type": "select", "choices": EXPENSE_NATURES},
+        {"name": "nature", "label": "Nature", "type": "select", "choices": EXPENSE_NATURES, "default": "Variable"},
         {"name": "description", "label": "Description", "type": "textarea"},
         {"name": "amount", "label": "Amount (₹)", "type": "number", "step": "0.01", "required": True},
         {"name": "payment_method", "label": "Payment Method", "type": "select",

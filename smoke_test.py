@@ -1,21 +1,32 @@
 """Dev-only smoke test: walks every GET route and reports failures.
 
 Usage:  .venv\\Scripts\\python.exe smoke_test.py
-Not part of the application - delete it before deploying if you like.
+
+Runs against a throwaway SQLite file in the temp folder, so it never touches
+the real aflatoon.db. Not part of the application.
 """
 import os
 import re
 import sys
+import tempfile
 import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# must be set before aflatoon.config is imported, since Config reads it at
+# class-definition time
+_TMP_DB = os.path.join(tempfile.gettempdir(), "aflatoon_smoke_test.db")
+if os.path.exists(_TMP_DB):
+    os.remove(_TMP_DB)
+os.environ["DATABASE_URL"] = "sqlite:///" + _TMP_DB
+os.environ.setdefault("SECRET_KEY", "smoke-test-key")
 
 from aflatoon import create_app
 from aflatoon.extensions import db
 
 app = create_app()
-app.config['TESTING']=True
-app.config['PROPAGATE_EXCEPTIONS']=True
+app.config["TESTING"] = True
+app.config["PROPAGATE_EXCEPTIONS"] = True
 
 USER = app.config["ADMIN_USER"]
 PASSWORD = app.config["ADMIN_PASSWORD"]
