@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="topbar">
+  <div>
+    <h1>Settings</h1>
+    <div class="sub">Store configuration & planning targets</div>
+  </div>
+</div>
+
+{% if saved %}<div class="flash success">Settings saved.</div>{% endif %}
+{% if error %}<div class="flash error">{{ error }}</div>{% endif %}
+
+<form method="post" class="settings-form" action="{{ url_for('settings_view.index') }}">
+  <div class="card panel">
+    <div class="panel-head"><h3>Store</h3></div>
+    <div class="field-grid">
+      <div class="entry-field"><label>Store name</label>
+        <input type="text" name="store_name" value="{{ s.store_name or '' }}"></div>
+      <div class="entry-field"><label>Store type</label>
+        <input type="text" name="store_type" value="{{ s.store_type or '' }}"></div>
+      <div class="entry-field"><label>Currency</label>
+        <input type="text" name="currency" value="{{ s.currency or 'INR' }}"></div>
+    </div>
+  </div>
+
+  <div class="card panel">
+    <div class="panel-head"><h3>Monthly sales targets</h3></div>
+    <div class="field-grid">
+      <div class="entry-field"><label>Bad (&lt; = red)</label>
+        <input type="number" step="0.01" name="planning_sales_bad" value="{{ s.planning_sales_bad or 0 }}"></div>
+      <div class="entry-field"><label>Normal (&lt; = yellow)</label>
+        <input type="number" step="0.01" name="planning_sales_normal" value="{{ s.planning_sales_normal or 0 }}"></div>
+      <div class="entry-field"><label>Good</label>
+        <input type="number" step="0.01" name="planning_sales_good" value="{{ s.planning_sales_good or 0 }}"></div>
+    </div>
+  </div>
+
+  <div class="card panel">
+    <div class="panel-head"><h3>Stock planning</h3></div>
+    <div class="field-grid">
+      <div class="entry-field"><label>Initial stock estimate</label>
+        <input type="number" name="initial_stock_estimate" value="{{ s.initial_stock_estimate or 0 }}"></div>
+      <div class="entry-field"><label>Est. new items / month</label>
+        <input type="number" name="est_new_items_per_month" value="{{ s.est_new_items_per_month or 0 }}"></div>
+    </div>
+  </div>
+
+  <div class="card panel">
+    <div class="panel-head"><h3>Thresholds (%)</h3></div>
+    <div class="field-grid">
+      <div class="entry-field"><label>Restock %</label>
+        <input type="number" step="0.01" name="restock_pct" value="{{ s.restock_pct or 0 }}"></div>
+      <div class="entry-field"><label>Major restock %</label>
+        <input type="number" step="0.01" name="major_restock_pct" value="{{ s.major_restock_pct or 0 }}"></div>
+      <div class="entry-field"><label>Owner cash target %</label>
+        <input type="number" step="0.01" name="owner_cash_target_pct" value="{{ s.owner_cash_target_pct or 0 }}"></div>
+    </div>
+  </div>
+
+  <button type="submit" class="btn primary">Save Settings</button>
+</form>
+
+<style>
+  .settings-form{display:grid;gap:16px;max-width:760px}
+  .panel{margin-bottom:0;padding:18px 20px}
+  .panel-head{margin-bottom:14px}
+  .panel-head h3{margin:0;font-size:15px}
+  .field-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
+  .entry-field{display:grid;gap:6px}
+  .entry-field label{font-size:13px;font-weight:600}
+  .entry-field input{padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px}
+</style>
+{% endblock %}

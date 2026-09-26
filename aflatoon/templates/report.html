@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="topbar">
+  <div>
+    <h1>{{ title or 'Report' }}</h1>
+    {% if subtitle %}<div class="sub">{{ subtitle }}</div>{% endif %}
+  </div>
+  <div class="actions">
+    {% if export_url %}<a class="btn ghost" href="{{ export_url }}">Export</a>{% endif %}
+    {% if back_url %}<a class="btn ghost" href="{{ back_url }}">Back</a>{% endif %}
+  </div>
+</div>
+
+{% if kpis %}
+<div class="grid">
+  {% for k in kpis %}
+  <div class="kpi">
+    <div class="label">{{ k.label }}</div>
+    <div class="value">{{ k.value }}</div>
+    {% if k.hint %}<div class="hint">{{ k.hint }}</div>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if summary %}
+<div class="card summary">
+  <div class="summary-row">
+    {% for k, v in summary.items() %}
+    <div class="s-item">
+      <span class="s-label">{{ k }}</span><span class="s-value">{{ v }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if headers and rows %}
+<div class="table-wrap">
+<table>
+  <thead><tr>{% for h in headers %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>
+      {% for cell in row.cells %}<td>{{ cell }}</td>{% endfor %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% elif not kpis and not summary %}
+<p class="empty">No data to show.</p>
+{% endif %}
+
+<style>
+  .summary{padding:18px 20px;margin-bottom:18px}
+  .summary-row{display:flex;flex-wrap:wrap;gap:22px}
+  .s-item{display:grid;gap:2px}
+  .s-label{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+  .s-value{font-size:16px;font-weight:700}
+</style>
+{% endblock %}

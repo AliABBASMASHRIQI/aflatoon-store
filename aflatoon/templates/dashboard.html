@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="topbar">
+  <div>
+    <h1>Dashboard</h1>
+    <div class="sub">{{ summary.month_label if summary else s.store_name or "Aflatoon Studio" }}</div>
+  </div>
+  <div class="actions">
+    <a class="btn primary" href="{{ url_for('sales.new') }}">+ Record Sale</a>
+    <a class="btn ghost" href="{{ url_for('cash.create') }}">Add Cash/Bank</a>
+  </div>
+</div>
+
+{% with flashes = get_flashed_messages(with_categories=true) %}
+{% if flashes %}
+<ul class="flashes">
+  {% for cat, msg in flashes %}<li class="flash {{ cat }}">{{ msg }}</li>{% endfor %}
+</ul>
+{% endif %}
+{% endwith %}
+
+{% if summary %}
+<div class="grid kpis">
+  {% for k in summary.kpis %}
+  <div class="kpi">
+    <div class="label">{{ k.label }}</div>
+    <div class="value {% if k.hi %}ok{% elif k.lo %}bad{% endif %}">{{ k.value }}</div>
+    {% if k.hint %}<div class="hint">{{ k.hint }}</div>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if d %}
+{% for section in d.sections %}
+<section class="card panel">
+  <div class="panel-head">
+    <h3>{{ section.title }}</h3>
+    {% if section.link_url %}
+      <a class="btn ghost sm" href="{{ section.link_url }}">View all</a>
+    {% endif %}
+  </div>
+  {% if section.rows %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr>
+      {% for h in section.headers %}<th>{{ h }}</th>{% endfor %}
+    </tr></thead>
+    <tbody>
+      {% for row in section.rows %}
+      <tr>
+        {% for cell in row.cells %}<td>{{ cell }}</td>{% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="empty">{{ section.empty or "Nothing here yet." }}</div>
+  {% endif %}
+</section>
+{% endfor %}
+{% else %}
+<div class="card panel">
+  <div class="panel-head"><h3>Welcome back</h3></div>
+  <div class="empty">Healthy trading. All systems normal.</div>
+</div>
+{% endif %}
+<style>
+  .panel{margin-bottom:20px}
+  .panel-head{display:flex;align-items:center;justify-content:space-between;padding:4px 0 12px}
+  .panel-head h3{margin:0;font-size:16px}
+  .kpi .value.ok{color:var(--ok)}
+  .kpi .value.bad{color:var(--err)}
+  .btn.sm{padding:6px 10px;font-size:12.5px;margin:0}
+</style>
+{% endblock %}

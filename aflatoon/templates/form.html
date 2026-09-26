@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="topbar">
+  <div>
+    <h1>{{ form_title or 'Add / Edit' }}</h1>
+    {% if form_subtitle %}<div class="sub">{{ form_subtitle }}</div>{% endif %}
+  </div>
+</div>
+
+<form method="post" action="{{ action_url or request.url }}" class="entry-form">
+  {% for f in fields %}
+  <div class="entry-field">
+    <label for="f-{{ f.name }}">
+      {{ f.label }}
+      {% if f.required %}<span class="req">*</span>{% endif %}
+    </label>
+    {% if f.type == 'textarea' %}
+      <textarea id="f-{{ f.name }}" name="{{ f.name }}"
+        {% if f.required %}required{% endif %}
+        {% if f.rows %}rows="{{ f.rows }}"{% else %}rows="4{% endif %}"
+        placeholder="{{ f.placeholder or '' }}">{{ values.get(f.name, '') or '' }}</textarea>
+    {% elif f.type == 'select' %}
+      <select id="f-{{ f.name }}" name="{{ f.name }}"
+        {% if f.required %}required{% endif %}>
+        {% for opt in (f.options or []) %}
+          <option value="{{ opt.value }}" {% if values.get(f.name) == opt.value or (loop.first and not values.get(f.name)) %}selected{% endif %}>{{ opt.label or opt.value }}</option>
+        {% endfor %}
+      </select>
+    {% elif f.type == 'date' %}
+      <input id="f-{{ f.name }}" type="date" name="{{ f.name }}"
+        value="{{ values.get(f.name, '') or '' }}" {% if f.required %}required{% endif %}>
+    {% else %}
+      <input id="f-{{ f.name }}" type="{{ f.type or 'text' }}"
+        name="{{ f.name }}" value="{{ values.get(f.name, '') or '' }}"
+        {% if f.required %}required{% endif %}
+        {% if f.step %}step="{{ f.step }}"{% endif %}
+        {% if f.min is defined %}min="{{ f.min }}"{% endif %}
+        placeholder="{{ f.placeholder or '' }}">
+    {% endif %}
+    {% if f.hint %}<p class="hint">{{ f.hint }}</p>{% endif %}
+  </div>
+  {% endfor %}
+  <div class="entry-actions">
+    <button type="submit" class="btn primary" formaction="{{ action_url or request.url }}">{{ submit_label or 'Save' }}</button>
+    {% set path = request.path %}
+    {% set back = None %}
+    <a class="btn ghost" href="{{ back or url_for('auth.login') }}">Cancel</a>
+  </div>
+</form>
+<style>
+  .entry-form{display:grid;gap:16px;max-width:640px}
+  .entry-field{display:grid;gap:6px}
+  .entry-field label{font-size:13.5px;font-weight:600}
+  .entry-field .req{color:var(--err)}
+  .entry-field input,.entry-field select,.entry-field textarea{padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;font-family:inherit}
+  .entry-field input:focus,.entry-field select:focus,.entry-field textarea:focus{outline:2px solid var(--brand);outline-offset:1px;border-color:var(--brand)}
+  .entry-field .hint{font-size:12.5px;color:var(--muted);margin:2px 0 0}
+  .entry-actions{display:flex;gap:10px;margin-top:8px}
+</style>
+{% endblock %}

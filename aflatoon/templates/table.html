@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="topbar">
+  <div>
+    <h1>{{ title or 'Records' }}</h1>
+    {% if subtitle %}<div class="sub">{{ subtitle }}</div>{% endif %}
+  </div>
+  <div class="actions">
+    {% if new_url %}<a class="btn primary" href="{{ new_url }}">+ Add New</a>{% endif %}
+  </div>
+</div>
+
+{% if headers and rows %}
+<table>
+  <thead>
+    <tr>
+      {% for h in headers %}<th>{{ h }}</th>{% endfor %}
+      {% if actions %}<th class="col-actions">Actions</th>{% endif %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>
+      {% for cell in row.cells %}<td>{{ cell }}</td>{% endfor %}
+      {% if actions %}
+      <td class="col-actions">
+        {% for a in actions %}
+          {% if a.type == 'link' %}
+            <a class="action-link" href="{{ a.href(row) if a.href is callable else (a.href % loop.index0) if a.href else '#' }}">{{ a.label }}</a>
+          {% elif a.type == 'post' %}
+            <form method="post" action="{{ (a.href(row) if a.href is callable else a.href) }}" style="display:inline" onsubmit="return confirm('{{ a.confirm or 'Delete this record?' }}');">
+              <button type="submit" class="action-link danger">{{ a.label }}</button>
+            </form>
+          {% endif %}
+        {% endfor %}
+      </td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No {{ title|lower if title else 'records' }} found.</div>
+{% endif %}
+<style>
+  .actions{display:flex;gap:10px}
+  .action-link{color:var(--brand);text-decoration:none;font-size:13px;margin-right:10px}
+  .action-link:hover{text-decoration:underline}
+  .action-link.danger{color:var(--err);background:none;border:0;cursor:pointer;padding:0;font-size:13px;font-family:inherit}
+  .col-actions{white-space:nowrap}
+</style>
+{% endblock %}

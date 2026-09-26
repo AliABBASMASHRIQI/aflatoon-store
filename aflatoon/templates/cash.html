@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="topbar">
+  <div>
+    <h1>Cash · Bank · UPI</h1>
+    <div class="sub">Daily ledger of cash, bank & UPI movements</div>
+  </div>
+  <div class="actions">
+    <a class="btn primary" href="{{ new_url or url_for('cash.create') }}">+ New Entry</a>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="kpi"><div class="label">Cash on Hand</div><div class="value">{{ starting_cash }}</div></div>
+  <div class="kpi"><div class="label">Bank Balance</div><div class="value">{{ starting_bank }}</div></div>
+</div>
+
+{% if rows %}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      {% for h in headers %}<th>{{ h }}</th>{% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      {% for cell in r.cells %}<td>{{ cell }}</td>{% endfor %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="empty no-data">No ledger entries yet — add your first cash/bank/UPI movement above.</div>
+{% endif %}
+
+<style>
+  .no-data{padding:36px;text-align:center;color:var(--muted)}
+</style>
+{% endblock %}

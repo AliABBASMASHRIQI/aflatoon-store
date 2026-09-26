@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="brand">{{ s.store_name if s and s.store_name else 'Aflatoon Studio' }}</div>
+    <p class="tagline">Owner sign in</p>
+    {% with flashes = get_flashed_messages(with_categories=true) %}
+    {% if flashes %}
+    <ul class="flashes">
+      {% for cat, msg in flashes %}<li class="flash {{ cat }}">{{ msg }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+    {% endwith %}
+    <form method="post" action="{{ url_for('auth.login') }}">
+      <label>Username
+        <input type="text" name="username" autocomplete="username" autofocus required>
+      </label>
+      <label>Password
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <button type="submit" class="btn primary wide">Sign in</button>
+    </form>
+  </div>
+</div>
+<style>
+  .login-wrap{min-height:100vh;display:grid;place-items:center;background:
+    linear-gradient(135deg,#1c1917,#292524)}
+  .login-card{width:min(400px,94vw);background:#fff;border-radius:18px;padding:40px 36px;
+              box-shadow:0 24px 60px rgba(0,0,0,.35)}
+  .login-card .brand{font-size:22px;font-weight:800;color:var(--brand)}
+  .login-card .tagline{color:var(--muted);font-size:14px;margin:4px 0 22px}
+  .login-card form{display:grid;gap:14px}
+  .login-card label{display:grid;gap:6px;font-size:13px;font-weight:600}
+  .login-card input{padding:11px 13px;border:1px solid var(--line);border-radius:10px;font-size:15px;
+                    background:var(--bg)}
+  .login-card input:focus{outline:2px solid var(--brand);border-color:var(--brand);background:#fff}
+  .btn.wide{width:100%;justify-content:center}
+</style>
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="topbar">
+  <div>
+    <h1>{{ 'Edit Budget' if budget else 'Set Monthly Budget' }}</h1>
+    <div class="sub">
+      {% if budget %}{{ budget.month }}{% else %}{{ today.strftime('%B %Y') if today }}{% endif %}
+    </div>
+  </div>
+</div>
+
+<form method="post" class="entry-form" action="{{ request.url }}">
+  {% if error %}<div class="flash error">{{ error }}</div>{% endif %}
+
+  {% if not budget %}
+  <div class="entry-field">
+    <label for="month">Month <span class="req">*</span></label>
+    <input type="month" name="month" id="month" value="{{ month or (today.strftime('%Y-%m') if today) }}" required>
+  </div>
+  {% endif %}
+
+  <div class="budget-grid">
+    {% for field in cat_fields %}
+    <div class="entry-field">
+      <label for="{{ field.name }}">{{ field.label }}</label>
+      <input type="number" step="0.01" min="0" name="{{ field.name }}" id="{{ field.name }}"
+        value="{{ budget.get(field.name) or 0 if budget and budget.get is defined else 0 }}"
+        {% if field.hint %} title="{{ field.hint }}"{% endif %}>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="entry-actions">
+    <button type="submit" class="btn primary">Save Budget</button>
+    <a class="btn ghost" href="{{ url_for('budgets.index') }}">Cancel</a>
+  </div>
+</form>
+<style>
+  .budget-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px}
+  .entry-field{display:grid;gap:6px}
+  .entry-field label{font-size:13px;font-weight:600}
+  .req{color:var(--err)}
+  .entry-field input{padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px}
+  .entry-actions{display:flex;gap:10px;margin-top:8px}
+  .flash.error{background:#fef2f2;color:var(--err);border:1px solid #fecaca;padding:10px 14px;border-radius:8px;margin-bottom:14px}
+</style>
+{% endblock %}

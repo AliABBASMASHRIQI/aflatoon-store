@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ s.store_name if s else 'Aflatoon Studio' }}{% endblock %}</title>
+  <style>
+    :root{
+      --brand:#b45309; --brand-2:#d97706; --ink:#1f2937; --muted:#6b7280;
+      --line:#e5e7eb; --bg:#f7f5f2; --card:#ffffff; --ok:#15803d; --err:#b91c1c;
+      --warn:#b45309;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+         background:var(--bg);color:var(--ink);}
+    a{color:var(--brand);text-decoration:none}
+    a:hover{text-decoration:underline}
+
+    .layout{display:flex;min-height:100vh}
+    .sidebar{width:230px;background:#1c1917;color:#e7e5e4;padding:22px 12px;flex-shrink:0;
+             display:flex;flex-direction:column;gap:2px}
+    .sidebar .brand{font-size:18px;font-weight:700;color:#fff;padding:0 10px 16px;
+                    border-bottom:1px solid #3f3a36;margin-bottom:12px}
+    .sidebar a{display:block;padding:9px 12px;border-radius:8px;color:#d6d3d1;font-size:14px}
+    .sidebar a:hover{background:#292524;color:#fff;text-decoration:none}
+    .sidebar a.current{background:#44403c;color:#fff}
+    .sidebar .footer{margin-top:auto;padding:12px 12px 0;border-top:1px solid #3f3a36;
+                     font-size:12.5px;color:#a8a29e}
+    .content{flex:1;padding:28px 32px;max-width:1200px}
+
+    .topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;
+            margin-bottom:20px}
+    .topbar h1{margin:0;font-size:24px;font-weight:700}
+    .topbar .sub{margin-top:4px;color:var(--muted);font-size:14px}
+    .actions{display:flex;gap:10px;flex-wrap:wrap}
+
+    .btn{display:inline-block;padding:9px 16px;border-radius:9px;border:1px solid transparent;
+         font-size:14px;font-weight:600;cursor:pointer;text-decoration:none}
+    .btn:hover{text-decoration:none}
+    .btn.primary{background:var(--brand);color:#fff}
+    .btn.primary:hover{background:#92400e}
+    .btn.ghost{background:#fff;border-color:var(--line);color:var(--ink)}
+    .btn.ghost:hover{border-color:var(--brand);color:var(--brand)}
+    .btn.danger{background:#fff;border-color:#fecaca;color:var(--err)}
+    .btn.danger:hover{background:var(--err);color:#fff;border-color:var(--err)}
+
+    .flashes{list-style:none;padding:0;margin:0 0 20px}
+    .flash{padding:11px 14px;border-radius:8px;margin-bottom:10px;font-size:14px;
+           border:1px solid transparent}
+    .flash.success{background:#f0fdf4;color:var(--ok);border-color:#bbf7d0}
+    .flash.error,.flash.danger{background:#fef2f2;color:var(--err);border-color:#fecaca}
+    .flash.warning{background:#fffbeb;color:var(--warn);border-color:#fde68a}
+    .flash.info{background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe}
+
+    .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+          padding:20px 22px;margin-bottom:18px}
+    .panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+    .panel-head h3{margin:0;font-size:16px}
+
+    .table-wrap{overflow-x:auto;background:var(--card);border:1px solid var(--line);
+                border-radius:12px}
+    table{width:100%;border-collapse:collapse;font-size:14px}
+    th,td{padding:11px 14px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+    th{background:#faf9f8;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+    tbody tr:last-child td{border-bottom:0}
+    tbody tr:hover td{background:#fcfaf8}
+    .empty{padding:46px 20px;text-align:center;color:var(--muted);font-size:14px}
+
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;
+          margin-bottom:18px}
+    .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+    .kpi .label{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);
+                margin-bottom:6px}
+    .kpi .value{font-size:22px;font-weight:700}
+    .kpi .value.ok{color:var(--ok)}
+    .kpi .value.bad{color:var(--err)}
+    .kpi .hint{font-size:12.5px;color:var(--muted);margin-top:6px}
+  </style>
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">{{ s.store_name if s and s.store_name else 'Aflatoon Studio' }}</div>
+    <a href="{{ url_for('dashboard.index') }}">Dashboard</a>
+    <a href="{{ url_for('sales.list_sales') if 'list_sales' in request.url_rule.endpoint else url_for('sales.index') }}">Sales</a>
+    <a href="{{ url_for('items.index') }}">Items</a>
+    <a href="{{ url_for('batches.index') }}">Purchase Batches</a>
+    <a href="{{ url_for('suppliers.index') }}">Suppliers</a>
+    <a href="{{ url_for('expenses.index') }}">Expenses</a>
+    <a href="{{ url_for('adjustments.index') }}">Adjustments</a>
+    <a href="{{ url_for('cash.index') }}">Cash · Bank · UPI</a>
+    <a href="{{ url_for('budgets.index') }}">Monthly Budget</a>
+    <a href="{{ url_for('emi.index') }}">EMI Tracker</a>
+    <a href="{{ url_for('reports.stock') }}">📊 Stock Summary</a>
+    <a href="{{ url_for('reports.sales_analysis') }}">📈 Sales Analysis</a>
+    <a href="{{ url_for('reports.target') }}">🎯 Target Projection</a>
+    <a href="{{ url_for('reports.restock') }}">🔄 Restock Intelligence</a>
+    <a href="{{ url_for('reports.profit') }}">💰 Profit &amp; Cash</a>
+    <a href="{{ url_for('reports.major_restock') }}">🧳 Major Restock Reserve</a>
+    <a href="{{ url_for('reports.data_quality') }}">🔍 Data Quality</a>
+    <a href="{{ url_for('settings_view.index') }}">⚙️ Settings</a>
+    <div class="footer">
+      <a href="{{ url_for('auth.logout') }}" style="color:#fca5a5">Log out</a>
+    </div>
+  </nav>
+  <main class="content">
+    {% with flashes = get_flashed_messages(with_categories=true) %}
+    {% if flashes %}
+    <ul class="flashes">
+      {% for cat, msg in flashes %}<li class="flash {{ cat }}">{{ msg }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+</body>
+</html>

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="topbar">
+  <div>
+    <h1>Monthly Budget</h1>
+    <div class="sub">
+      {% if view_month %}{{ view_month }}{% else %}{{ today.strftime('%B %Y') if today }}{% endif %}
+    </div>
+  </div>
+  <div class="actions">
+    <a class="btn primary" href="{{ url_for('budgets.create') }}">+ Set Budget</a>
+  </div>
+</div>
+
+{% if block %}
+  {% for b in block %}
+  <div class="card panel budget-section">
+    <div class="panel-head">
+      <h3>{{ b.title }}</h3>
+      {% if b.total %}<div class="total">{{ money(b.total.value) }}</div>{% endif %}
+    </div>
+    {% if b.rows %}
+    <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>{% for h in headers if h != 'cat_fields' %}<th>{{ h }}</th>{% endfor %}</tr>
+      </thead>
+      <tbody>
+        {% for r in b.rows %}
+        <tr>
+          {% for c in r.cells %}<td>{{ c }}</td>{% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+{% else %}
+<div class="card panel">
+  <div class="panel-head"><h3>No budget set</h3></div>
+  <div class="empty">No budget configured for this month yet — click "Set Budget" to define it.</div>
+</div>
+{% endif %}
+<style>
+  .budget-section{margin-bottom:18px}
+  .panel-head{display:flex;align-items:center;justify-content:space-between}
+  .panel-head h3{margin:0;font-size:15.5px}
+  .total{font-weight:700;color:var(--brand)}
+</style>
+{% endblock %}

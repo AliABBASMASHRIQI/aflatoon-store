@@ -26,6 +26,15 @@ def ym_key(d: date) -> tuple:
     return (d.year, d.month)
 
 
+# Backwards-compatible names (services.py imports these)
+def month_start(d: date) -> date:
+    return first_of_month(d)
+
+
+def month_end(d: date) -> date:
+    return end_of_month(d)
+
+
 def month_series(today: date, back: int = 12, fwd: int = 11):
     start = first_of_month(today) - relativedelta(months=back)
     return [start + relativedelta(months=i) for i in range(back + 1 + fwd)]
