@@ -2,25 +2,34 @@
 {% block content %}
 <div class="topbar">
   <div>
-    <h1>{{ title or 'Sales Analysis' }}</h1>
-    {% if subtitle %}<div class="sub">{{ subtitle }}</div>{% endif %}
+    <h1>Sales Analysis</h1>
+    <div class="sub">What is selling, by category and by month</div>
   </div>
 </div>
 
-{% if categories %}
+{% if kpis %}
 <div class="grid">
-  {% for c in categories %}
+  {% for k in kpis %}
   <div class="kpi">
-    <div class="label">{{ c.category }}</div>
-    <div class="value">{{ c.sales }}</div>
-    <div class="hint">{{ c.units }} units · {{ c.gp }} GP · {{ c.margin }}</div>
-    <div class="share-bar"><div class="share-fill" style="width:{{ c.share }}"></div></div>
+    <div class="label">{{ k.label }}</div>
+    <div class="value">{{ k.value }}</div>
   </div>
   {% endfor %}
 </div>
 {% endif %}
 
-{% if cat_rows %}
+{% if categories %}
+<div class="grid cats">
+  {% for c in categories %}
+  <div class="kpi">
+    <div class="label">{{ c.category }}</div>
+    <div class="value">{{ c.sales|money }}</div>
+    <div class="hint">{{ c.units|num }} units &middot; {{ c.gp|money }} GP &middot; {{ c.margin|pct }}</div>
+    <div class="share-bar"><div class="share-fill" style="width:{{ (c.share * 100)|round(1) }}%"></div></div>
+  </div>
+  {% endfor %}
+</div>
+
 <div class="table-wrap">
 <table>
   <thead><tr>{% for h in cat_headers %}<th>{{ h }}</th>{% endfor %}</tr></thead>
@@ -31,10 +40,12 @@
   </tbody>
 </table>
 </div>
+{% else %}
+<div class="empty">No sales recorded yet. This report fills in as sales are added.</div>
 {% endif %}
 
-{% if matrix and matrix_rows %}
-<div class="section-title">Month × Category Matrix</div>
+{% if matrix_rows and matrix_headers|length > 1 %}
+<div class="section-title">Month &times; category</div>
 <div class="table-wrap">
 <table class="matrix">
   <thead><tr>{% for h in matrix_headers %}<th>{{ h }}</th>{% endfor %}</tr></thead>
@@ -48,11 +59,10 @@
 {% endif %}
 
 <style>
-  .share-bar{background:var(--line);border-radius:6px;height:8px;margin-top:10px;overflow:hidden}
+  .share-bar{background:var(--line);border-radius:6px;height:7px;margin-top:9px;overflow:hidden}
   .share-fill{background:var(--brand);height:100%;border-radius:6px}
-  .section-title{font-weight:700;margin:24px 0 10px;font-size:15px}
-  .matrix th{white-space:nowrap}
-  .matrix td{padding:8px 12px;white-space:nowrap;text-align:right}
+  .cats .kpi .value{font-size:18px}
+  .matrix td{text-align:right}
   .matrix td:first-child{text-align:left;font-weight:600}
 </style>
 {% endblock %}

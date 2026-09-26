@@ -31,18 +31,30 @@ CONTRACT  (kept in sync with aflatoon/views/*.py):
 from datetime import date, timedelta
 from decimal import Decimal
 
+from sqlalchemy import func, or_
+from sqlalchemy.orm import joinedload
+
 from aflatoon.extensions import db
 from aflatoon.helpers import (month_start, month_end, month_series, num,
                               money, money2, pct, datefmt, to_float, to_int,
                               to_date, next_id)
 from aflatoon.models import (Settings, PurchaseBatch, Supplier, Item, Sale,
-                             MonthlyBudget, BUDGET_CATEGORY_FIELDS,
-                             BUDGET_CATEGORY_FIELDS_LABELS, CATEGORIES,
+                             MonthlyBudget, BUDGET_CATEGORY_FIELDS, CATEGORIES,
                              ITEM_STATUSES, SUPPLIER_TYPES, PAYMENT_METHODS,
                              ITEM_TYPES, EXPENSE_CATEGORIES, EXPENSE_NATURES,
-                             ADJUSTMENT_TYPES, ITEM_STATUSES1, Sale,
-                             CashTxn, Expense, EmiTracker, MonthlyBudget,
-                             Settings)
+                             ADJUSTMENT_TYPES, CashTxn, Expense, EmiTracker)
+
+# ---------------------------------------------------------------------------
+# SQL mirrors of the Sale python properties.
+# A python @property cannot be handed to sum(), so every aggregate that used
+# Sale.final_value / cost_total / gross_profit needs the equivalent SQL here.
+# Anything touching SALE_COST or SALE_GP must also .join(Item).
+# ---------------------------------------------------------------------------
+SALE_QTY = func.coalesce(Sale.qty, 0)
+SALE_NET = (SALE_QTY * func.coalesce(Sale.listed_price, 0)
+            - func.coalesce(Sale.discount, 0))
+SALE_COST = SALE_QTY * func.coalesce(Item.allocated_cost, 0)
+SALE_GP = SALE_NET - SALE_COST
 
 # ----------------------------------------------------------------------------
 # settings
@@ -82,8 +94,14 @@ def get_settings() -> Settings:
 # dashboard
 # ----------------------------------------------------------------------------
 
-def _month_start_end(ref: date) -> tuple:
-    return month_start(ref), month_end(ref)
+def _month_bounds(ref: date) -> tuple:
+    """(first day of ref's month, first day of the NEXT month).
+
+    The end is EXCLUSIVE so it can be used with `<` in filters. The old
+    _month_start_end returned an inclusive last-day while callers compared
+    with `<`, which silently dropped the final day of every month.
+    """
+    return month_start(ref), month_end(ref) + timedelta(days=1)
 
 
 def _sum(q) -> float:
@@ -95,22 +113,23 @@ def _sum(q) -> float:
 def dashboard_data() -> dict:
     """Everything the dashboard.html page shows (see d.* context)."""
     now = date.today()
-    m_start, m_end = _month_start_end(now)
+    m_start, m_end = _month_bounds(now)
     per = db.func.coalesce
 
     today_sales = _sum(
-        db.session.query(per(db.func.sum(Sale.final_value), 0))
+        db.session.query(per(func.sum(SALE_NET), 0))
         .filter(Sale.sale_date == now, Sale.is_returned.is_(False)))
     month_sales = _sum(
-        db.session.query(per(db.func.sum(Sale.final_value), 0))
+        db.session.query(per(func.sum(SALE_NET), 0))
         .filter(Sale.sale_date >= m_start, Sale.sale_date < m_end,
                 Sale.is_returned.is_(False)))
     gp_mtd = _sum(
-        db.session.query(per(db.func.sum(Sale.gross_profit), 0))
+        db.session.query(per(func.sum(SALE_GP), 0))
+        .join(Item, Sale.item_id == Item.id)
         .filter(Sale.sale_date >= m_start, Sale.sale_date < m_end,
                 Sale.is_returned.is_(False)))
     exp_mtd = _sum(
-        db.session.query(per(db.func.sum(Expense.amount), 0))
+        db.session.query(per(func.sum(Expense.amount), 0))
         .filter(Expense.expense_date >= m_start, Expense.expense_date < m_end))
 
     s = get_settings()
@@ -122,23 +141,23 @@ def dashboard_data() -> dict:
     forecast = run_rate * days_in_month
 
     bank_in = _sum(
-        db.session.query(per(db.func.sum(CashTxn.bank_upi_in), 0))
+        db.session.query(per(func.sum(CashTxn.bank_upi_in), 0))
         .filter(CashTxn.date >= m_start, CashTxn.date < m_end))
     bank_out = _sum(
-        db.session.query(per(db.func.sum(CashTxn.bank_upi_out), 0))
+        db.session.query(per(func.sum(CashTxn.bank_upi_out), 0))
         .filter(CashTxn.date >= m_start, CashTxn.date < m_end))
     owner_cash_savings_mtd = bank_in - bank_out
 
     emi_due = EmiTracker.query.filter(
         EmiTracker.is_paid.is_(False),
         EmiTracker.next_due_date.isnot(None)).count()
-    critical_stock = 0
-    low_stock = 0
+    dead_stock = 0
+    slow_stock = 0
     for r in stock_summary_rows():
-        if r.get("health") in ("CRITICAL",):
-            critical_stock += 1
-        elif r.get("health") in ("LOW",):
-            low_stock += 1
+        if r.get("health") == "DEAD":
+            dead_stock += 1
+        elif r.get("health") == "SLOW":
+            slow_stock += 1
 
     over_budget = 0
     for b in MonthlyBudget.query.all():
@@ -162,8 +181,8 @@ def dashboard_data() -> dict:
         "major_restock_pct": float(s.major_restock_pct or 0),
         "owner_cash_target_pct": float(s.owner_cash_target_pct or 0),
         "emi_due": emi_due,
-        "critical_stock": critical_stock,
-        "low_stock": low_stock,
+        "dead_stock": dead_stock,
+        "slow_stock": slow_stock,
         "over_budget": over_budget,
         "quality_issues": quality_issues,
     }
@@ -280,48 +299,57 @@ def _coverage_flag(health: str) -> str:
 
 
 def stock_summary_rows() -> list:
-    """Per-item inventory summary with velocity / coverage / health."""
+    """Per-item inventory summary.
 
-    from aflatoon.models import Item as _Item
+    An Item row IS one physical garment (PurchaseBatch.processed_qty counts
+    rows, models.py), so there is no running quantity to track - an item is
+    either on the rail or sold. Per-item *coverage* is therefore meaningless
+    (one unit / tiny velocity = "0 days"), so health is driven by how long
+    the piece has been sitting unsold. Category-level coverage - the number
+    that actually means something - lives in restock_intelligence_rows().
+    """
+    today = date.today()
+    s = get_settings()
+    slow_days = float(s.slow_moving_days or 60)
+    dead_days = float(s.dead_stock_days or 90)
+
     rows = []
-    for i in _Item.query.order_by(_Item.item_id).all():
-        ready_qty = max((i.current_qty or 0), 0)
-        sold = [s for s in i.sales if not s.is_returned]
-        units_sold = sum((s.qty or 0) for s in sold)
-        sales_value = sum(float(s.final_value or 0) for s in sold)
-        days_in_stock = None
-        if i.purchase_date:
-            days_in_stock = (date.today() - i.purchase_date).days
-        days_sold = (i.date_sold - i.purchase_date).days if i.date_sold and i.purchase_date else None
-        velocity = (units_sold / days_in_stock) if days_in_stock else 0
-        current_qty = ready_qty - sum((s.qty or 0) for s in sold)
-        stock_value = current_qty * float(i.allocated_cost or 0)
-        coverage = None
-        if velocity and current_qty is not None:
-            coverage = current_qty / velocity
-        health = "CRITICAL"
-        if current_qty <= 0:
-            health = "OUT OF STOCK"
-        elif coverage is not None:
-            s = get_settings()
-            if coverage <= float(s.critical_coverage_days or 14):
-                health = "CRITICAL"
-            elif coverage <= float(s.low_coverage_days or 30):
-                health = "LOW"
-            elif coverage <= float(s.slow_moving_days or 60):
-                health = "SLOW"
-            else:
-                health = "OK"
+    for i in Item.query.options(joinedload(Item.sales)).order_by(Item.item_id).all():
+        sold = [x for x in i.sales if not x.is_returned]
+        units_sold = sum((x.qty or 0) for x in sold)
+        sales_value = sum(float(x.final_value or 0) for x in sold)
+        gp = sum(float(x.gross_profit or 0) for x in sold)
+        is_sold = i.current_status == "Sold"
+        in_stock = 0 if is_sold else 1
+
+        if i.date_sold:
+            days_held = (i.date_sold - i.purchase_date).days if i.purchase_date else None
+        elif i.purchase_date:
+            days_held = (today - i.purchase_date).days
+        else:
+            days_held = None
+
+        if is_sold:
+            health = "SOLD"
+        elif days_held is None:
+            health = "UNKNOWN"
+        elif days_held >= dead_days:
+            health = "DEAD"
+        elif days_held >= slow_days:
+            health = "SLOW"
+        else:
+            health = "OK"
+
         rows.append({
             "item": i,
             "category": i.category or "",
-            "days_in_stock": days_in_stock,
+            "days_held": days_held,
             "units_sold": units_sold,
             "sales_value": sales_value,
-            "current_qty": current_qty,
-            "stock_value": stock_value,
-            "velocity": velocity,
-            "coverage": coverage,
+            "gross_profit": gp,
+            "in_stock": in_stock,
+            "is_sold": is_sold,
+            "stock_value": in_stock * float(i.allocated_cost or 0),
             "health": health,
         })
     return rows
@@ -333,10 +361,9 @@ def stock_summary_rows() -> list:
 
 def sales_analysis_data() -> dict:
     """Category + monthly matrix of sales / gross profit."""
-    from aflatoon.models import Sale as _Sale, Item as _Item
     categories = []
     cat_totals = {}
-    for sale in _Sale.query.options(db.jointload(_Sale.item)).all():
+    for sale in Sale.query.options(joinedload(Sale.item)).all():
         if sale.is_returned:
             continue
         cat = (sale.item.category if sale.item else None) or "Other Clothing"
@@ -346,7 +373,7 @@ def sales_analysis_data() -> dict:
         cat_totals[cat]["sales"] += float(sale.final_value or 0)
         cat_totals[cat]["gp"] += float(sale.gross_profit or 0)
     total_sales = sum(c["sales"] for c in cat_totals.values()) or 1
-    for cat, t in sorted(cat_totals.items()):
+    for cat, t in sorted(cat_totals.items(), key=lambda kv: -kv[1]["sales"]):
         categories.append({
             "category": cat,
             "units": t["units"],
@@ -356,23 +383,33 @@ def sales_analysis_data() -> dict:
             "share": (t["sales"] / total_sales) if total_sales else 0,
         })
 
-    # month x category matrix (last 12 months with sales)
+    # month x category matrix - one grouped query instead of 12 * len(categories)
     months = month_series(date.today(), back=12, fwd=0)[-12:]
     matrix = []
-    for m in months:
-        m_start = month_start(m)
-        m_end = month_end(m) + timedelta(days=1)
-        row = {"month": m_start, "cats": {}}
-        for cat in cat_totals.keys():
-            v = _sum(
-                db.session.query(db.func.coalesce(db.func.sum(_Sale.final_value), 0))
-                .join(_Item)
-                .filter(_Sale.sale_date >= m_start, _Sale.sale_date < m_end,
-                        _Sale.is_returned.is_(False),
-                        _Item.category == cat))
-            row["cats"][cat] = v
-        matrix.append(row)
-    return {"categories": categories, "matrix": matrix}
+    if cat_totals:
+        first = month_start(months[0])
+        last = month_end(months[-1]) + timedelta(days=1)
+        grid = {}
+        q = (db.session.query(Item.category, Sale.sale_date, func.sum(SALE_NET))
+             .join(Sale, Sale.item_id == Item.id)
+             .filter(Sale.sale_date >= first, Sale.sale_date < last,
+                     Sale.is_returned.is_(False))
+             .group_by(Item.category, Sale.sale_date))
+        for cat, sdate, total in q:
+            key = (cat or "Other Clothing", month_start(sdate))
+            grid[key] = grid.get(key, 0.0) + float(total or 0)
+        for m in months:
+            ms = month_start(m)
+            matrix.append({
+                "month": ms,
+                "cats": {c: grid.get((c, ms), 0.0) for c in cat_totals},
+            })
+    else:
+        for m in months:
+            matrix.append({"month": month_start(m), "cats": {}})
+
+    return {"categories": categories, "matrix": matrix,
+            "cat_names": list(cat_totals.keys())}
 
 
 # ----------------------------------------------------------------------------
@@ -394,7 +431,7 @@ def target_projection_rows() -> list:
             days_elapsed = 0
         days_remaining = max(days_in_month - days_elapsed, 0)
         actual = _sum(
-            db.session.query(db.func.coalesce(db.func.sum(Sale.final_value), 0))
+            db.session.query(func.coalesce(func.sum(SALE_NET), 0))
             .filter(Sale.sale_date >= m_start, Sale.sale_date <= m_end,
                     Sale.is_returned.is_(False)))
         achievement = (actual / target) if target else 0
@@ -425,57 +462,87 @@ def target_projection_rows() -> list:
 # ----------------------------------------------------------------------------
 
 def restock_intelligence_rows() -> list:
-    """Category-level restock priority and suggested fund."""
+    """Category-level restock priority and suggested fund.
+
+    Coverage is only meaningful once units are aggregated (one garment is one
+    unit), so this compares in-stock units per category against 90-day sales
+    velocity. Two grouped queries instead of a per-item Python loop.
+    """
     s = get_settings()
     normal_target = float(s.planning_sales_normal or 0)
     today = date.today()
-    cutoff90 = today - timedelta(days=90)
+    cutoff = today - timedelta(days=90)
+
+    crit = float(s.critical_coverage_days or 14)
+    low = float(s.low_coverage_days or 30)
+    slow = float(s.slow_moving_days or 60)
+
+    in_stock, avg_cost = {}, {}
+    for cat, cnt, ac in (db.session.query(Item.category, func.count(Item.id),
+                                          func.avg(Item.allocated_cost))
+                         .filter(Item.current_status != "Sold")
+                         .group_by(Item.category)):
+        key = cat or "Other Clothing"
+        in_stock[key] = in_stock.get(key, 0) + int(cnt or 0)
+        if ac:
+            avg_cost[key] = float(ac)
+
+    sold90 = {}
+    q = (db.session.query(Item.category,
+                          func.coalesce(func.sum(Sale.qty), 0),
+                          func.coalesce(func.sum(SALE_NET), 0),
+                          func.coalesce(func.sum(SALE_GP), 0))
+         .join(Sale, Sale.item_id == Item.id)
+         .filter(Sale.sale_date >= cutoff, Sale.sale_date <= today,
+                 Sale.is_returned.is_(False))
+         .group_by(Item.category))
+    for cat, units, sales, gp in q:
+        key = cat or "Other Clothing"
+        e = sold90.setdefault(key, {"units": 0, "sales": 0.0, "gp": 0.0})
+        e["units"] += int(units or 0)
+        e["sales"] += float(sales or 0)
+        e["gp"] += float(gp or 0)
+
+    daily_target = (normal_target / 30.0) if normal_target else 0
     out = []
-    from aflatoon.models import Item as _Item
-    by_cat = {}
-    for i in _Item.query.all():
-        c = i.category or "Other Clothing"
-        by_cat.setdefault(c, []).append(i)
-    for cat, items in by_cat.items():
-        ready = sum(max((i.current_qty or 0) - (i.qty_sold or 0), 0) for i in items)
-        sold_90 = sum(i.qty_sold or 0 for i in items
-                      if i.date_sold and i.date_sold >= cutoff90)
-        sales_90 = sum(float(i.sales_value or 0) for i in items
-                       if i.date_sold and i.date_sold >= cutoff90)
-        gp_90 = sum(float(i.gross_profit or 0) for i in items
-                    if i.date_sold and i.date_sold >= cutoff90)
-        coverage = None
-        if sold_90:
-            daily = sold_90 / 90.0
-            coverage = (ready / daily) if daily else None
-        score = 0.0
-        if coverage is not None:
-            if coverage <= float(s.critical_coverage_days or 14):
-                score = 5.0
-            elif coverage <= float(s.low_coverage_days or 30):
-                score = 3.0
-            elif coverage <= float(s.slow_moving_days or 60):
-                score = 1.0
-        priority = ("CRITICAL" if score >= 5 else
-                    "HIGH" if score >= 3 else
-                    "MEDIUM" if score >= 1 else "OK")
+    for cat in set(in_stock) | set(sold90):
+        ready = in_stock.get(cat, 0)
+        s90 = sold90.get(cat, {"units": 0, "sales": 0.0, "gp": 0.0})
+        daily = s90["units"] / 90.0
+        coverage = (ready / daily) if daily > 0 else None
+
+        if coverage is None:
+            score = 0.0
+        elif coverage <= crit:
+            score = 5.0
+        elif coverage <= low:
+            score = 3.0
+        elif coverage <= slow:
+            score = 1.0
+        else:
+            score = 0.0
+
+        priority = ("CRITICAL" if score >= 5 else "HIGH" if score >= 3
+                    else "MEDIUM" if score >= 1 else "OK")
+
         suggested_fund = 0.0
-        if score >= 3:
-            daily_target = (normal_target / 30.0) if normal_target else 0
-            suggested_fund = daily_target * max(
-                (float(s.critical_coverage_days or 14) - (coverage or 0)), 0)
+        if score >= 3 and daily_target:
+            gap_units = max(daily_target * crit - ready, 0)
+            suggested_fund = gap_units * avg_cost.get(cat, 0)
+
         out.append({
             "category": cat,
             "sale_ready_units": ready,
-            "units_sold_90d": sold_90,
-            "sales_90d": sales_90,
-            "gp_90d": gp_90,
+            "units_sold_90d": s90["units"],
+            "sales_90d": s90["sales"],
+            "gp_90d": s90["gp"],
             "coverage": coverage,
             "score": score,
             "priority": priority,
+            "avg_cost": avg_cost.get(cat, 0.0),
             "suggested_fund": suggested_fund,
         })
-    out.sort(key=lambda r: r["score"], reverse=True)
+    out.sort(key=lambda r: (-r["score"], -(r["coverage"] or 9999)))
     return out
 
 
@@ -495,11 +562,12 @@ def profit_cash_rows() -> list:
         m_start = month_start(m)
         m_end = month_end(m)
         net_sales = _sum(
-            db.session.query(db.func.coalesce(db.func.sum(Sale.final_value), 0))
+            db.session.query(func.coalesce(func.sum(SALE_NET), 0))
             .filter(Sale.sale_date >= m_start, Sale.sale_date <= m_end,
                     Sale.is_returned.is_(False)))
         cogs = _sum(
-            db.session.query(db.func.coalesce(db.func.sum(Sale.cost_total), 0))
+            db.session.query(func.coalesce(func.sum(SALE_COST), 0))
+            .join(Item, Sale.item_id == Item.id)
             .filter(Sale.sale_date >= m_start, Sale.sale_date <= m_end,
                     Sale.is_returned.is_(False)))
         gross_profit = net_sales - cogs
@@ -552,7 +620,8 @@ def major_restock_rows() -> list:
         m_start = month_start(m)
         m_end = month_end(m)
         gp = _sum(
-            db.session.query(db.func.coalesce(db.func.sum(Sale.gross_profit), 0))
+            db.session.query(func.coalesce(func.sum(SALE_GP), 0))
+            .join(Item, Sale.item_id == Item.id)
             .filter(Sale.sale_date >= m_start, Sale.sale_date <= m_end,
                     Sale.is_returned.is_(False)))
         reserve_target = gp * reserve_pct
@@ -580,51 +649,64 @@ def major_restock_rows() -> list:
 # reports — data quality
 # ----------------------------------------------------------------------------
 
+def _blank(col):
+    return or_(col.is_(None), col == "")
+
+
 def _quality_checks() -> list:
+    """Data integrity checks. Each one must be able to fire - an earlier
+    version tested Sale.item_id for NULL on a NOT NULL column and a python
+    property for NULL, so both silently reported zero forever."""
     checks = []
-    from aflatoon.models import (Item as _Item, Sale as _Sale,
-                                 PurchaseBatch as _Batch, Expense as _Exp)
-    # items missing category
-    n = _Item.query.filter(db.or_(_Item.category.is_(None),
-                                  _Item.category == "")).count()
+
+    def add(severity, label, n, fix=None):
+        if n:
+            checks.append({"severity": severity, "label": label,
+                           "count": n, "fix": fix})
+
+    add("High", "Items with no category",
+        Item.query.filter(_blank(Item.category)).count(),
+        "reports/restock")
+    add("Medium", "Items without allocated cost",
+        Item.query.filter(Item.allocated_cost.is_(None),
+                          Item.allocated_cost == 0).count())
+    add("Medium", "Items without listed price",
+        Item.query.filter(Item.listed_price.is_(None),
+                          Item.listed_price == 0).count())
+    add("Low", "Items not linked to a purchase batch",
+        Item.query.filter(Item.purchase_batch_id.is_(None)).count())
+
+    # a sale whose item has no cost silently reports the wrong gross profit
+    n = (db.session.query(func.count(Sale.id))
+         .join(Item, Sale.item_id == Item.id)
+         .filter(Sale.is_returned.is_(False),
+                 or_(Item.allocated_cost.is_(None), Item.allocated_cost == 0))
+         .scalar())
+    add("High", "Sales on items with no cost (profit will be wrong)", int(n or 0))
+
+    # stock says sold but no sale was ever recorded
+    n = (db.session.query(func.count(Item.id))
+         .outerjoin(Sale, Sale.item_id == Item.id)
+         .filter(Item.current_status == "Sold", Sale.id.is_(None))
+         .scalar())
+    add("High", "Items marked Sold but have no sale record", int(n or 0),
+        "items")
+
+    add("Medium", "Batches without total cost",
+        PurchaseBatch.query.filter(PurchaseBatch.total_cost.is_(None),
+                                   PurchaseBatch.total_cost == 0).count())
+    add("Low", "Expenses without category",
+        Expense.query.filter(_blank(Expense.category)).count())
+
+    n = int(db.session.query(func.count(Sale.id))
+            .filter(Sale.is_returned.is_(True)).scalar() or 0)
     if n:
-        checks.append({"severity": "High", "label": "Items with no category",
-                       "count": n})
-    # items without allocated cost
-    n = _Item.query.filter(db.or_(_Item.allocated_cost.is_(None),
-                                  _Item.allocated_cost == 0)).count()
-    if n:
-        checks.append({"severity": "Medium", "label": "Items without allocated cost",
-                       "count": n})
-    # items without listed price
-    n = _Item.query.filter(db.or_(_Item.listed_price.is_(None),
-                                  _Item.listed_price == 0)).count()
-    if n:
-        checks.append({"severity": "Medium", "label": "Items without listed price",
-                       "count": n})
-    # sales without item link / zero value
-    n = _Sale.query.filter(db.or_(_Sale.item_id.is_(None),
-                                  _Sale.final_value.is_(None))).count()
-    if n:
-        checks.append({"severity": "High", "label": "Sales missing item/value",
-                       "count": n})
-    # returned sales that still count as sold
-    n = _Sale.query.filter(_Sale.is_returned.is_(True),
-                           _Sale.is_returned.isnot(None)).count()
-    if n:
-        checks.append({"severity": "Low", "label": "Returned sales on record",
-                       "count": n})
-    # batches without total cost
-    n = _Batch.query.filter(db.or_(_Batch.total_cost.is_(None),
-                                   _Batch.total_cost == 0)).count()
-    if n:
-        checks.append({"severity": "Medium", "label": "Batches without total cost",
-                       "count": n})
-    # expenses without category
-    n = _Exp.query.filter(db.or_(_Exp.category.is_(None), _Exp.category == "")).count()
-    if n:
-        checks.append({"severity": "Low", "label": "Expenses without category",
-                       "count": n})
+        checks.append({"severity": "Low",
+                       "label": "Returned sales on record (restock these)",
+                       "count": n, "fix": "items"})
+
+    order = {"High": 0, "Medium": 1, "Low": 2}
+    checks.sort(key=lambda c: (order.get(c["severity"], 9), -c["count"]))
     return checks
 
 

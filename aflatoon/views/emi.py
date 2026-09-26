@@ -4,7 +4,7 @@ from datetime import date as _date, timedelta
 from aflatoon.extensions import db
 from aflatoon.helpers import (login_required, next_id, to_float, to_date,
                               date_input, money)
-from aflatoon.models import EmiTracker, get_settings
+from aflatoon.models import EmiTracker
 
 bp = Blueprint("emi", __name__, url_prefix="/emi")
 
@@ -27,10 +27,10 @@ def index():
                       money(e.outstanding_principal), e.remaining_emis or "-",
                       e.alert],
         } for e in emis],
-        actions=[{"label": "Edit", "endpoint": "emi.edit"},
-                 {"label": "Mark Paid", "endpoint": "emi.mark_paid",
+        actions=[{"label": "Edit", "endpoint": "emi.edit", "arg": "emi_id"},
+                 {"label": "Mark Paid", "endpoint": "emi.mark_paid", "arg": "emi_id",
                   "confirm": "Mark this EMI as paid?"},
-                 {"label": "Delete", "endpoint": "emi.delete", "delete": True}],
+                 {"label": "Delete", "endpoint": "emi.delete", "arg": "emi_id", "delete": True}],
         total=len(emis),
     )
 

@@ -27,8 +27,8 @@ def index():
                       a.reason or "-", a.approved_by or "-",
                       "Yes" if a.is_processed else "No"],
         } for a in rows],
-        actions=[{"label": "Edit", "endpoint": "adjustments.edit"},
-                 {"label": "Delete", "endpoint": "adjustments.delete", "delete": True}],
+        actions=[{"label": "Edit", "endpoint": "adjustments.edit", "arg": "adj_id"},
+                 {"label": "Delete", "endpoint": "adjustments.delete", "arg": "adj_id", "delete": True}],
         total=len(rows),
     )
 

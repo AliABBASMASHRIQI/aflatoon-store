@@ -3,107 +3,160 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}{{ s.store_name if s else 'Aflatoon Studio' }}{% endblock %}</title>
+  <title>{% block title %}{{ app_settings.store_name if app_settings and app_settings.store_name else 'Aflatoon Studio' }}{% endblock %}</title>
   <style>
     :root{
       --brand:#b45309; --brand-2:#d97706; --ink:#1f2937; --muted:#6b7280;
       --line:#e5e7eb; --bg:#f7f5f2; --card:#ffffff; --ok:#15803d; --err:#b91c1c;
-      --warn:#b45309;
+      --warn:#b45309; --sidebar:#1c1917; --sidebar-ink:#e7e5e4;
     }
     *{box-sizing:border-box}
     body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
          background:var(--bg);color:var(--ink);}
     a{color:var(--brand);text-decoration:none}
     a:hover{text-decoration:underline}
+    h1,h2,h3{margin:0}
 
     .layout{display:flex;min-height:100vh}
-    .sidebar{width:230px;background:#1c1917;color:#e7e5e4;padding:22px 12px;flex-shrink:0;
-             display:flex;flex-direction:column;gap:2px}
-    .sidebar .brand{font-size:18px;font-weight:700;color:#fff;padding:0 10px 16px;
-                    border-bottom:1px solid #3f3a36;margin-bottom:12px}
-    .sidebar a{display:block;padding:9px 12px;border-radius:8px;color:#d6d3d1;font-size:14px}
+
+    /* ---- sidebar ---- */
+    .sidebar{width:236px;background:var(--sidebar);color:var(--sidebar-ink);
+             padding:20px 12px;flex-shrink:0;display:flex;flex-direction:column;
+             position:sticky;top:0;height:100vh;overflow-y:auto;z-index:60}
+    .sidebar .brand{font-size:17px;font-weight:700;color:#fff;padding:0 10px 4px}
+    .sidebar .tagline{font-size:11.5px;color:#a8a29e;padding:0 10px 14px;
+                      border-bottom:1px solid #3f3a36;margin-bottom:12px}
+    .sidebar .group{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;
+                    color:#78716c;padding:14px 12px 5px}
+    .sidebar a{display:block;padding:8px 12px;border-radius:8px;color:#d6d3d1;font-size:14px}
     .sidebar a:hover{background:#292524;color:#fff;text-decoration:none}
     .sidebar a.current{background:#44403c;color:#fff}
     .sidebar .footer{margin-top:auto;padding:12px 12px 0;border-top:1px solid #3f3a36;
-                     font-size:12.5px;color:#a8a29e}
-    .content{flex:1;padding:28px 32px;max-width:1200px}
+                     font-size:12.5px}
 
+    /* ---- content ---- */
+    .content{flex:1;min-width:0;padding:26px 30px;max-width:1240px}
     .topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;
-            margin-bottom:20px}
-    .topbar h1{margin:0;font-size:24px;font-weight:700}
+            margin-bottom:18px;flex-wrap:wrap}
+    .topbar h1{font-size:23px;font-weight:700}
     .topbar .sub{margin-top:4px;color:var(--muted);font-size:14px}
     .actions{display:flex;gap:10px;flex-wrap:wrap}
 
     .btn{display:inline-block;padding:9px 16px;border-radius:9px;border:1px solid transparent;
-         font-size:14px;font-weight:600;cursor:pointer;text-decoration:none}
+         font-size:14px;font-weight:600;cursor:pointer;text-decoration:none;white-space:nowrap}
     .btn:hover{text-decoration:none}
     .btn.primary{background:var(--brand);color:#fff}
     .btn.primary:hover{background:#92400e}
     .btn.ghost{background:#fff;border-color:var(--line);color:var(--ink)}
     .btn.ghost:hover{border-color:var(--brand);color:var(--brand)}
-    .btn.danger{background:#fff;border-color:#fecaca;color:var(--err)}
-    .btn.danger:hover{background:var(--err);color:#fff;border-color:var(--err)}
+    .btn.sm{padding:6px 11px;font-size:12.5px}
 
-    .flashes{list-style:none;padding:0;margin:0 0 20px}
+    .nav-toggle{display:none;background:#fff;border:1px solid var(--line);border-radius:9px;
+               padding:8px 12px;font-size:18px;cursor:pointer;line-height:1}
+    .scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:55}
+
+    .flashes{list-style:none;padding:0;margin:0 0 18px}
     .flash{padding:11px 14px;border-radius:8px;margin-bottom:10px;font-size:14px;
            border:1px solid transparent}
     .flash.success{background:#f0fdf4;color:var(--ok);border-color:#bbf7d0}
-    .flash.error,.flash.danger{background:#fef2f2;color:var(--err);border-color:#fecaca}
+    .flash.danger,.flash.error{background:#fef2f2;color:var(--err);border-color:#fecaca}
     .flash.warning{background:#fffbeb;color:var(--warn);border-color:#fde68a}
     .flash.info{background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe}
 
     .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
-          padding:20px 22px;margin-bottom:18px}
-    .panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
-    .panel-head h3{margin:0;font-size:16px}
+          padding:18px 20px;margin-bottom:16px}
+    .panel-head{display:flex;align-items:center;justify-content:space-between;
+                gap:12px;margin-bottom:12px;flex-wrap:wrap}
+    .panel-head h3{font-size:15.5px}
 
     .table-wrap{overflow-x:auto;background:var(--card);border:1px solid var(--line);
-                border-radius:12px}
+                border-radius:12px;-webkit-overflow-scrolling:touch}
     table{width:100%;border-collapse:collapse;font-size:14px}
-    th,td{padding:11px 14px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
-    th{background:#faf9f8;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+    th,td{padding:10px 13px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+    th{background:#faf9f8;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;
+       color:var(--muted);position:sticky;top:0}
     tbody tr:last-child td{border-bottom:0}
     tbody tr:hover td{background:#fcfaf8}
-    .empty{padding:46px 20px;text-align:center;color:var(--muted);font-size:14px}
+    .empty{padding:40px 20px;text-align:center;color:var(--muted);font-size:14px}
 
-    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;
-          margin-bottom:18px}
-    .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
-    .kpi .label{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);
-                margin-bottom:6px}
-    .kpi .value{font-size:22px;font-weight:700}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:13px;
+          margin-bottom:16px}
+    .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:15px 17px}
+    .kpi .label{font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);
+                margin-bottom:5px}
+    .kpi .value{font-size:21px;font-weight:700}
     .kpi .value.ok{color:var(--ok)}
     .kpi .value.bad{color:var(--err)}
-    .kpi .hint{font-size:12.5px;color:var(--muted);margin-top:6px}
+    .kpi .hint{font-size:12.5px;color:var(--muted);margin-top:5px}
+
+    .section-title{font-weight:700;margin:22px 0 10px;font-size:15px}
+    .muted{color:var(--muted)}
+
+    /* ---- phone ---- */
+    @media (max-width:900px){
+      .layout{display:block}
+      .sidebar{position:fixed;top:0;left:0;bottom:0;height:100dvh;width:250px;
+               transform:translateX(-100%);transition:transform .18s ease-out}
+      body.nav-open .sidebar{transform:none}
+      body.nav-open .scrim{display:block}
+      .nav-toggle{display:inline-block}
+      .content{padding:16px 14px 40px}
+      .topbar h1{font-size:20px}
+      .grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+      .kpi .value{font-size:18px}
+      th,td{padding:9px 11px}
+    }
+    @media (max-width:520px){
+      .grid{grid-template-columns:1fr 1fr}
+      .btn{padding:9px 13px}
+    }
   </style>
 </head>
 <body>
 <div class="layout">
   <nav class="sidebar">
-    <div class="brand">{{ s.store_name if s and s.store_name else 'Aflatoon Studio' }}</div>
-    <a href="{{ url_for('dashboard.index') }}">Dashboard</a>
-    <a href="{{ url_for('sales.list_sales') if 'list_sales' in request.url_rule.endpoint else url_for('sales.index') }}">Sales</a>
-    <a href="{{ url_for('items.index') }}">Items</a>
-    <a href="{{ url_for('batches.index') }}">Purchase Batches</a>
-    <a href="{{ url_for('suppliers.index') }}">Suppliers</a>
-    <a href="{{ url_for('expenses.index') }}">Expenses</a>
-    <a href="{{ url_for('adjustments.index') }}">Adjustments</a>
-    <a href="{{ url_for('cash.index') }}">Cash · Bank · UPI</a>
-    <a href="{{ url_for('budgets.index') }}">Monthly Budget</a>
-    <a href="{{ url_for('emi.index') }}">EMI Tracker</a>
-    <a href="{{ url_for('reports.stock') }}">📊 Stock Summary</a>
-    <a href="{{ url_for('reports.sales_analysis') }}">📈 Sales Analysis</a>
-    <a href="{{ url_for('reports.target') }}">🎯 Target Projection</a>
-    <a href="{{ url_for('reports.restock') }}">🔄 Restock Intelligence</a>
-    <a href="{{ url_for('reports.profit') }}">💰 Profit &amp; Cash</a>
-    <a href="{{ url_for('reports.major_restock') }}">🧳 Major Restock Reserve</a>
-    <a href="{{ url_for('reports.data_quality') }}">🔍 Data Quality</a>
-    <a href="{{ url_for('settings_view.index') }}">⚙️ Settings</a>
+    <div class="brand">{{ app_settings.store_name if app_settings and app_settings.store_name else 'Aflatoon Studio' }}</div>
+    <div class="tagline">Thrift Store Manager</div>
+
+    <a href="{{ url_for('dashboard.index') }}" class="{{ 'current' if request.endpoint == 'dashboard.index' }}">Dashboard</a>
+
+    <div class="group">Inventory</div>
+    <a href="{{ url_for('items.index') }}" class="{{ 'current' if request.blueprint == 'items' }}">Items</a>
+    <a href="{{ url_for('batches.index') }}" class="{{ 'current' if request.blueprint == 'batches' }}">Purchase Batches</a>
+    <a href="{{ url_for('adjustments.index') }}" class="{{ 'current' if request.blueprint == 'adjustments' }}">Stock Adjustments</a>
+
+    <div class="group">Money</div>
+    <a href="{{ url_for('sales.index') }}" class="{{ 'current' if request.blueprint == 'sales' }}">Sales Entry</a>
+    <a href="{{ url_for('expenses.index') }}" class="{{ 'current' if request.blueprint == 'expenses' }}">Expenses</a>
+    <a href="{{ url_for('cash.index') }}" class="{{ 'current' if request.blueprint == 'cash' }}">Cash &middot; Bank &middot; UPI</a>
+    <a href="{{ url_for('emi.index') }}" class="{{ 'current' if request.blueprint == 'emi' }}">EMI Tracker</a>
+
+    <div class="group">Planning</div>
+    <a href="{{ url_for('budgets.index') }}" class="{{ 'current' if request.blueprint == 'budgets' }}">Monthly Budgets</a>
+    <a href="{{ url_for('suppliers.index') }}" class="{{ 'current' if request.blueprint == 'suppliers' }}">Suppliers</a>
+
+    <div class="group">Reports</div>
+    <a href="{{ url_for('reports.stock') }}" class="{{ 'current' if request.endpoint == 'reports.stock' }}">Stock Summary</a>
+    <a href="{{ url_for('reports.sales_analysis') }}" class="{{ 'current' if request.endpoint == 'reports.sales_analysis' }}">Sales Analysis</a>
+    <a href="{{ url_for('reports.target') }}" class="{{ 'current' if request.endpoint == 'reports.target' }}">Target &amp; Projection</a>
+    <a href="{{ url_for('reports.restock') }}" class="{{ 'current' if request.endpoint == 'reports.restock' }}">Restock Intelligence</a>
+    <a href="{{ url_for('reports.profit') }}" class="{{ 'current' if request.endpoint == 'reports.profit' }}">Profit &amp; Cash</a>
+    <a href="{{ url_for('reports.major_restock') }}" class="{{ 'current' if request.endpoint == 'reports.major_restock' }}">Major Restock</a>
+    <a href="{{ url_for('reports.data_quality') }}" class="{{ 'current' if request.endpoint == 'reports.data_quality' }}">Data Quality</a>
+
+    <div class="group">Manage</div>
+    <a href="{{ url_for('settings_view.index') }}" class="{{ 'current' if request.blueprint == 'settings_view' }}">Settings</a>
+
     <div class="footer">
       <a href="{{ url_for('auth.logout') }}" style="color:#fca5a5">Log out</a>
     </div>
   </nav>
+
+  <div class="scrim" onclick="document.body.classList.remove('nav-open')"></div>
+
   <main class="content">
+    <button class="nav-toggle" onclick="document.body.classList.toggle('nav-open')"
+            aria-label="Menu">&#9776;</button>
     {% with flashes = get_flashed_messages(with_categories=true) %}
     {% if flashes %}
     <ul class="flashes">

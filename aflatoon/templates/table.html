@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block title %}{{ title or 'Records' }}{% endblock %}
 {% block content %}
 <div class="topbar">
   <div>
@@ -10,7 +11,36 @@
   </div>
 </div>
 
+{% if month_sales is defined or extra_total is defined %}
+<div class="grid kpis">
+  {% if month_sales is defined %}
+  <div class="kpi"><div class="label">This Month Sales</div>
+    <div class="value">{{ month_sales|money }}</div></div>
+  {% endif %}
+  {% if month_gp is defined %}
+  <div class="kpi"><div class="label">This Month Gross Profit</div>
+    <div class="value ok">{{ month_gp|money }}</div></div>
+  {% endif %}
+  {% if extra_total is defined %}
+  <div class="kpi"><div class="label">Total on this screen</div>
+    <div class="value">{{ extra_total|money }}</div></div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if search_field %}
+<form method="get" class="searchbar">
+  <input name="{{ search_field }}" value="{{ request.args.get(search_field, '') }}"
+         placeholder="{{ search_placeholder or 'Search...' }}">
+  <button class="btn ghost" type="submit">Search</button>
+  {% if request.args.get(search_field) %}
+  <a class="btn ghost" href="{{ request.path }}">Clear</a>
+  {% endif %}
+</form>
+{% endif %}
+
 {% if headers and rows %}
+<div class="table-wrap">
 <table>
   <thead>
     <tr>
@@ -25,12 +55,14 @@
       {% if actions %}
       <td class="col-actions">
         {% for a in actions %}
-          {% if a.type == 'link' %}
-            <a class="action-link" href="{{ a.href(row) if a.href is callable else (a.href % loop.index0) if a.href else '#' }}">{{ a.label }}</a>
-          {% elif a.type == 'post' %}
-            <form method="post" action="{{ (a.href(row) if a.href is callable else a.href) }}" style="display:inline" onsubmit="return confirm('{{ a.confirm or 'Delete this record?' }}');">
-              <button type="submit" class="action-link danger">{{ a.label }}</button>
+          {% set kw = {a.arg or 'id': row.id} %}
+          {% if a.delete or a.confirm %}
+            <form method="post" class="inline" action="{{ url_for(a.endpoint, **kw) }}"
+                  onsubmit="return confirm('{{ a.confirm or "Delete this record? This cannot be undone." }}');">
+              <button type="submit" class="action-link {{ 'danger' if a.delete else '' }}">{{ a.label }}</button>
             </form>
+          {% else %}
+            <a class="action-link" href="{{ url_for(a.endpoint, **kw) }}">{{ a.label }}</a>
           {% endif %}
         {% endfor %}
       </td>
@@ -39,14 +71,40 @@
     {% endfor %}
   </tbody>
 </table>
-{% else %}
-<div class="empty">No {{ title|lower if title else 'records' }} found.</div>
+</div>
+
+{% if pagination and pagination.pages > 1 %}
+<div class="pager">
+  <span class="muted">Page {{ pagination.page }} of {{ pagination.pages }} &middot; {{ pagination.total }} records</span>
+  <span class="pager-links">
+    {% if pagination.has_prev %}
+    <a class="btn ghost" href="{{ url_for(request.endpoint, page=pagination.prev_num, q=request.args.get('q','')) }}">&larr; Prev</a>
+    {% endif %}
+    {% if pagination.has_next %}
+    <a class="btn ghost" href="{{ url_for(request.endpoint, page=pagination.next_num, q=request.args.get('q','')) }}">Next &rarr;</a>
+    {% endif %}
+  </span>
+</div>
 {% endif %}
+
+{% else %}
+<div class="empty">No {{ (title or 'records')|lower }} found.</div>
+{% endif %}
+
 <style>
-  .actions{display:flex;gap:10px}
-  .action-link{color:var(--brand);text-decoration:none;font-size:13px;margin-right:10px}
+  .searchbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;max-width:520px}
+  .searchbar input{flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--line);
+    border-radius:8px;font-size:16px;font-family:inherit;background:#fff}
+  .searchbar input:focus{outline:2px solid var(--brand);outline-offset:1px}
+  .action-link{color:var(--brand);text-decoration:none;font-size:13px;margin-right:12px;
+    background:none;border:0;cursor:pointer;padding:0;font-family:inherit}
   .action-link:hover{text-decoration:underline}
-  .action-link.danger{color:var(--err);background:none;border:0;cursor:pointer;padding:0;font-size:13px;font-family:inherit}
+  .action-link.danger{color:var(--err)}
+  form.inline{display:inline}
   .col-actions{white-space:nowrap}
+  .pager{display:flex;align-items:center;justify-content:space-between;gap:12px;
+    margin-top:14px;flex-wrap:wrap;font-size:13.5px}
+  .pager .muted{color:var(--muted)}
+  .pager-links{display:flex;gap:8px}
 </style>
 {% endblock %}

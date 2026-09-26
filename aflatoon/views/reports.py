@@ -18,28 +18,35 @@ def _fmt_coverage(c):
 @login_required
 def stock():
     rows = stock_summary_rows()
-    headers = ["Item ID", "Category", "Item Type", "Brand", "Size", "Status",
-               "Cost", "Listed", "Ready", "Days", "Sold", "Sales",
-               "Qty", "Stock Value", "Velocity", "Coverage", "Health"]
+    headers = ["Item ID", "Category", "Type", "Brand", "Size", "Status",
+               "Cost", "Sell", "MRP", "Purchased", "Days Held", "Sold",
+               "Stock Value", "Health"]
+    body = []
+    for r in rows:
+        it = r["item"]
+        body.append({"cells": [
+            it.item_id, r["category"] or "-", it.item_type or "-",
+            it.brand_name or it.brand_type or "-", it.size or "-",
+            it.current_status or "-",
+            money(it.allocated_cost), money(it.listed_price), money(it.mrp),
+            datefmt(it.purchase_date) or "-",
+            num(r["days_held"]) if r["days_held"] is not None else "-",
+            datefmt(it.date_sold) or "-",
+            money(r["stock_value"]), r["health"]]})
+
+    on_rail = sum(1 for r in rows if r["in_stock"])
+    value = sum(r["stock_value"] for r in rows)
+    slow = sum(1 for r in rows if r["health"] == "SLOW")
+    dead = sum(1 for r in rows if r["health"] == "DEAD")
     return render_template("report.html",
                            title="Stock Summary",
-                           subtitle="Per-item inventory view with health flags",
+                           subtitle="Every piece of stock, and how long it has been sitting",
                            headers=headers,
-                           rows=[{
-                               "cells": [r["item"].item_id, r["category"] or "-",
-                                         r["item"].item_type or "-",
-                                         r["item"].brand_name or r["item"].brand_type or "-",
-                                         r["item"].size or "-", r["item"].current_status or "-",
-                                         money(r["item"].allocated_cost),
-                                         money(r["item"].listed_price),
-                                         datefmt(r["item"].date_ready),
-                                         num(r["days_in_stock"]) if r["days_in_stock"] is not None else "-",
-                                         num(r["units_sold"]), money(r["sales_value"]),
-                                         num(r["current_qty"]), money(r["stock_value"]),
-                                         f"{r['velocity']:.3f}", _fmt_coverage(r["coverage"]),
-                                         r["health"]],
-                           } for r in rows],
-                           kpis=[{"label": "Items tracked", "value": num(len(rows))}],
+                           rows=body,
+                           kpis=[{"label": "Pieces tracked", "value": num(len(rows))},
+                                 {"label": "Still on the rail", "value": num(on_rail)},
+                                 {"label": "Stock value at cost", "value": money(value)},
+                                 {"label": "Slow / dead", "value": f"{num(slow)} / {num(dead)}"}],
                            )
 
 
@@ -51,16 +58,25 @@ def sales_analysis():
         "cells": [c["category"], num(c["units"]), money(c["sales"]),
                   money(c["gp"]), pct(c["margin"]), pct(c["share"])],
     } for c in d["categories"]]
-    matrix_headers = ["Month"] + CATEGORIES
+    # only the categories that actually have sales, not the full master list
+    names = d.get("cat_names") or []
+    matrix_headers = ["Month"] + names
     matrix_rows = [{"cells": [m["month"].strftime("%b %Y")] +
-                    [money(m[cat]) for cat in CATEGORIES]} for m in d["matrix"]]
+                    [money(m["cats"].get(c, 0)) for c in names]}
+                   for m in d["matrix"]]
+    total_sales = sum(c["sales"] for c in d["categories"])
     return render_template("sales_analysis.html",
                            d=d,
+                           categories=d["categories"],
                            cat_headers=["Category", "Units", "Sales", "Gross Profit",
                                         "Margin", "Sales Share"],
                            cat_rows=cat_rows,
-                           m_headers=matrix_headers,
-                           m_rows=matrix_rows)
+                           matrix_headers=matrix_headers,
+                           matrix_rows=matrix_rows,
+                           kpis=[{"label": "Total sales", "value": money(total_sales)},
+                                 {"label": "Categories selling", "value": num(len(names))},
+                                 {"label": "Units sold", "value": num(sum(c["units"] for c in d["categories"]))},
+                                 {"label": "Gross profit", "value": money(sum(c["gp"] for c in d["categories"]))}])
 
 
 @bp.route("/target")

@@ -26,8 +26,8 @@ def index():
                       b.qty_purchased, money(b.total_cost), money(b.paid_amount),
                       money(b.outstanding), f"{b.processed_qty}/{b.qty_purchased}"],
         } for b in batches],
-        actions=[{"label": "Edit", "endpoint": "batches.edit"},
-                 {"label": "Delete", "endpoint": "batches.delete", "delete": True}],
+        actions=[{"label": "Edit", "endpoint": "batches.edit", "arg": "batch_id"},
+                 {"label": "Delete", "endpoint": "batches.delete", "arg": "batch_id", "delete": True}],
         total=len(batches),
     )
 

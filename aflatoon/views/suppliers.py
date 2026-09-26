@@ -23,8 +23,8 @@ def index():
                       s.payment_terms or "-", money(s.total_purchased),
                       money(s.outstanding), "Yes" if s.is_active else "No"],
         } for s in suppliers],
-        actions=[{"label": "Edit", "endpoint": "suppliers.edit"},
-                 {"label": "Delete", "endpoint": "suppliers.delete", "delete": True}],
+        actions=[{"label": "Edit", "endpoint": "suppliers.edit", "arg": "sid"},
+                 {"label": "Delete", "endpoint": "suppliers.delete", "arg": "sid", "delete": True}],
         total=len(suppliers),
     )
 

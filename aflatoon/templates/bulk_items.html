@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+{% block title %}Bulk Add Items{% endblock %}
+{% block content %}
+<div class="topbar">
+  <div>
+    <h1>Add stock in bulk</h1>
+    <div class="sub">For a whole thrift lot. Set the shared details once, then
+      only fill in what changes row to row.</div>
+  </div>
+  <div class="actions">
+    <a class="btn ghost" href="{{ url_for('items.index') }}">Back to Items</a>
+  </div>
+</div>
+
+<form method="post" id="bulk-form">
+  <input type="hidden" name="row_count" id="row_count" value="{{ rows }}">
+
+  <div class="card">
+    <div class="panel-head"><h3>1. The lot</h3></div>
+    <div class="def-grid">
+      <div class="entry-field">
+        <label for="purchase_batch_id_sel">Purchase Batch</label>
+        <select id="purchase_batch_id_sel" name="purchase_batch_id_sel">
+          <option value="">--- none ---</option>
+          {% for b in batches %}
+          <option value="{{ b.id }}" {% if values.get('purchase_batch_id_sel')|string == b.id|string %}selected{% endif %}>
+            {{ b.batch_id }} &middot; {{ b.qty_purchased }} pcs &middot; {{ b.processed_qty }} entered
+          </option>
+          {% endfor %}
+        </select>
+        <p class="hint" id="batch-hint">Pick a batch to fill the cost per piece automatically.</p>
+      </div>
+      <div class="entry-field">
+        <label for="purchase_date">Purchase Date</label>
+        <input id="purchase_date" type="date" name="purchase_date"
+               value="{{ values.get('purchase_date', '') }}">
+      </div>
+      <div class="entry-field">
+        <label for="supplier_sel">Supplier</label>
+        <select id="supplier_sel" name="supplier_sel">
+          <option value="">--- none ---</option>
+          {% for s in suppliers %}
+          <option value="{{ s }}" {% if values.get('supplier_sel') == s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="panel-head"><h3>2. Shared for the whole lot</h3></div>
+    <div class="def-grid">
+      <div class="entry-field">
+        <label for="item_type">Item Type</label>
+        <select id="item_type" name="item_type">
+          {% for t in ITEM_TYPES %}
+          <option value="{{ t }}" {% if values.get('item_type') == t %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="entry-field">
+        <label for="brand_type">Brand Type</label>
+        <select id="brand_type" name="brand_type">
+          {% for t in BRAND_TYPES %}
+          <option value="{{ t }}" {% if values.get('brand_type') == t %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="entry-field">
+        <label for="default_category">Default Category</label>
+        <select id="default_category" name="default_category">
+          <option value="">--- none ---</option>
+          {% for c in CATEGORIES %}
+          <option value="{{ c }}" {% if values.get('default_category') == c %}selected{% endif %}>{{ c }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="entry-field">
+        <label for="current_status">Starting Status</label>
+        <select id="current_status" name="current_status">
+          {% for s in ITEM_STATUSES %}
+          <option value="{{ s }}" {% if values.get('current_status') == s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="def-actions">
+      <button type="button" class="btn ghost sm" onclick="applyDefaults()">
+        Copy these + cost/price into every row
+      </button>
+      <span class="muted" id="cost-note"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="panel-head">
+      <h3>3. The pieces</h3>
+      <span class="muted" id="count-note">{{ rows }} rows</span>
+    </div>
+    <p class="tip">Only Size, Colour, Cost and Price are per row. Leave a row
+      completely blank and it is skipped.</p>
+
+    <div class="table-wrap">
+      <table class="grid-table">
+        <thead>
+          <tr>
+            <th class="rn">#</th>
+            <th>Category</th>
+            <th>Size</th>
+            <th>Colour</th>
+            <th>Cost &#8377;</th>
+            <th>Sell &#8377;</th>
+            <th>MRP &#8377;</th>
+            <th>Note</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="rows">
+          {% for i in range(rows) %}
+          <tr>
+            <td class="rn">{{ i + 1 }}</td>
+            <td><select name="r{{ i }}_category" class="r-cat">
+                  <option value="">---</option>
+                  {% for c in CATEGORIES %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+                </select></td>
+            <td><input name="r{{ i }}_size" class="r-size" list="sizes"></td>
+            <td><input name="r{{ i }}_colour" class="r-colour"></td>
+            <td><input name="r{{ i }}_cost" class="r-cost" inputmode="decimal"></td>
+            <td><input name="r{{ i }}_listed" class="r-listed" inputmode="decimal"></td>
+            <td><input name="r{{ i }}_mrp" class="r-mrp" inputmode="decimal"></td>
+            <td><input name="r{{ i }}_description" class="r-desc"></td>
+            <td><button type="button" class="row-btn" title="Copy the row above into this one"
+                        onclick="copyAbove(this)">&darr;</button></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <datalist id="sizes">
+      <option value="XS"><option value="S"><option value="M"><option value="L">
+      <option value="XL"><option value="XXL"><option value="Free Size">
+    </datalist>
+
+    <div class="def-actions">
+      <button type="button" class="btn ghost sm" onclick="addRows(20)">+ 20 more rows</button>
+      <button type="button" class="btn ghost sm" onclick="addRows(50)">+ 50 more rows</button>
+      <button type="button" class="btn ghost sm" onclick="clearRows()">Clear all</button>
+    </div>
+  </div>
+
+  <div class="entry-actions">
+    <button type="submit" class="btn primary">Save all pieces</button>
+    <a class="btn ghost" href="{{ url_for('items.index') }}">Cancel</a>
+  </div>
+</form>
+
+<datalist id="batches-data" data-json="{{ batch_json }}"></datalist>
+<datalist id="suppliers-data" data-json="{{ suppliers_json }}"></datalist>
+
+<style>
+  .def-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}
+  .entry-field{display:grid;gap:6px}
+  .entry-field label{font-size:13px;font-weight:600}
+  .entry-field select,.entry-field input{padding:9px 11px;border:1px solid var(--line);
+    border-radius:8px;font-size:16px;font-family:inherit;background:#fff;width:100%}
+  .entry-field .hint{font-size:12.5px;color:var(--muted);margin:0}
+  .def-actions{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap}
+  .tip{font-size:13px;color:var(--muted);margin:0 0 12px}
+  .grid-table input,.grid-table select{padding:7px 9px;border:1px solid var(--line);
+    border-radius:7px;font-size:15px;font-family:inherit;background:#fff;width:100%;
+    min-width:74px}
+  .grid-table td{padding:5px 6px;vertical-align:middle}
+  .grid-table th{padding:8px 6px}
+  .grid-table .rn{color:var(--muted);font-size:12.5px;text-align:right;width:34px}
+  .row-btn{border:1px solid var(--line);background:#fff;border-radius:7px;cursor:pointer;
+    padding:5px 9px;font-size:13px;color:var(--muted)}
+  .row-btn:hover{border-color:var(--brand);color:var(--brand)}
+  .entry-actions{display:flex;gap:10px;margin:16px 0 40px;flex-wrap:wrap}
+  .r-cost,.r-listed,.r-mrp{text-align:right}
+  @media (max-width:760px){
+    .grid-table .r-desc, .grid-table th:nth-child(8){display:none}
+    .grid-table input,.grid-table select{min-width:62px;font-size:14px;padding:6px 7px}
+  }
+</style>
+
+<script>
+  var BATCHES = JSON.parse(document.getElementById('batches-data').dataset.json || '[]');
+  var CATEGORIES = {{ CATEGORIES | tojson }};
+  var rowCount = {{ rows }};
+  var counter = document.getElementById('rows');
+  var rowCountInput = document.getElementById('row_count');
+
+  function trFor(i) {
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td class="rn">' + (i + 1) + '</td>' +
+      '<td><select name="r' + i + '_category" class="r-cat"><option value="">---</option>' +
+        CATEGORIES.map(function (c) { return '<option value="' + c + '">' + c + '</option>'; }).join('') +
+      '</select></td>' +
+      '<td><input name="r' + i + '_size" class="r-size" list="sizes"></td>' +
+      '<td><input name="r' + i + '_colour" class="r-colour"></td>' +
+      '<td><input name="r' + i + '_cost" class="r-cost" inputmode="decimal"></td>' +
+      '<td><input name="r' + i + '_listed" class="r-listed" inputmode="decimal"></td>' +
+      '<td><input name="r' + i + '_mrp" class="r-mrp" inputmode="decimal"></td>' +
+      '<td><input name="r' + i + '_description" class="r-desc"></td>' +
+      '<td><button type="button" class="row-btn" onclick="copyAbove(this)">&darr;</button></td>';
+    return tr;
+  }
+
+  function addRows(n) {
+    var frag = document.createDocumentFragment();
+    for (var i = 0; i < n; i++) { frag.appendChild(trFor(rowCount++)); }
+    counter.appendChild(frag);
+    renumber();
+  }
+
+  function renumber() {
+    rowCountInput.value = counter.children.length;
+    Array.prototype.forEach.call(counter.children, function (tr, i) {
+      tr.querySelector('.rn').textContent = i + 1;
+    });
+    document.getElementById('count-note').textContent =
+      counter.children.length + ' rows';
+  }
+  counter.addEventListener('input', renumber);
+
+  function copyAbove(btn) {
+    var tr = btn.closest('tr');
+    var prev = tr.previousElementSibling;
+    if (!prev) return;
+    prev.querySelectorAll('input, select').forEach(function (el) {
+      var target = tr.querySelector('[name="' + el.name.replace(/^r\d+_/, '') + '"]');
+      if (!target) return;
+      var clone = target.cloneNode(true);
+      if (el.tagName === 'SELECT') {
+        Array.prototype.forEach.call(clone.options, function (o) {
+          o.selected = (o.value === el.value);
+        });
+      } else { clone.value = el.value; }
+      target.replaceWith(clone);
+    });
+  }
+
+  function clearRows() {
+    if (!confirm('Clear every row?')) return;
+    counter.querySelectorAll('input').forEach(function (el) { el.value = ''; });
+    counter.querySelectorAll('select').forEach(function (el) { el.selectedIndex = 0; });
+  }
+
+  function batchCostPerItem() {
+    var sel = document.getElementById('purchase_batch_id_sel');
+    var b = BATCHES.filter(function (x) { return String(x.id) === sel.value; })[0];
+    return b ? b.cost_per_item : 0;
+  }
+
+  document.getElementById('purchase_batch_id_sel').addEventListener('change', function () {
+    var cpi = batchCostPerItem();
+    var note = document.getElementById('cost-note');
+    if (cpi > 0) {
+      note.textContent = 'Cost per piece for this batch: \u20b9' + cpi;
+      document.getElementById('batch-hint').textContent =
+        'This lot works out at \u20b9' + cpi + ' per piece.';
+    } else {
+      note.textContent = '';
+    }
+  });
+
+  function applyDefaults() {
+    var cat = document.getElementById('default_category').value;
+    var cpi = batchCostPerItem();
+    var cost = document.querySelector('.grid-table .r-cost');
+    if (cost && cost.value === '' && cpi > 0) cost.value = cpi;
+    counter.querySelectorAll('tr').forEach(function (tr) {
+      var sel = tr.querySelector('.r-cat');
+      if (sel && sel.value === '' && cat) sel.value = cat;
+    });
+  }
+
+  renumber();
+</script>
+{% endblock %}

@@ -33,13 +33,19 @@ def create_app(config_class=Config):
         s = Settings.query.first()
         return {"app_settings": s or get_settings()}
 
-    # create tables + seed settings on first boot
+    # create tables + seed settings on first boot.
+    # Wrapped so that a database that is briefly unreachable fails the
+    # individual request instead of stopping the whole app from booting.
     with app.app_context():
-        db.create_all()
-        from aflatoon.services import get_settings
-        s = get_settings()
-        if not s.admin_pass_hash:
-            s.set_password(app.config["ADMIN_PASSWORD"])
-            db.session.commit()
+        try:
+            db.create_all()
+            from aflatoon.services import get_settings
+            s = get_settings()
+            if not s.admin_pass_hash:
+                s.set_password(app.config["ADMIN_PASSWORD"])
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
+            app.logger.exception("Database bootstrap failed - continuing without tables")
 
     return app
