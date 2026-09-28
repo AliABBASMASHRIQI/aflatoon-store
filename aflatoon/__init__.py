@@ -48,6 +48,13 @@ def _column_specs():
     return out
 
 
+# Bumped whenever a column is added or changed. A database whose stored
+# version matches this skips the whole column-widening pass, which matters
+# on serverless: the check is ~143 round trips, microseconds against a
+# local SQLite file but seconds over the network on every cold start.
+SCHEMA_VERSION = 2
+
+
 def _existing_columns(table):
     """Column names for a table, on SQLite or Postgres."""
     if db.engine.dialect.name == "postgresql":
@@ -60,8 +67,27 @@ def _existing_columns(table):
     return {r[1] for r in rows}
 
 
+def _schema_version() -> int:
+    """Version recorded in the settings table, or 0 if not yet stamped."""
+    try:
+        from aflatoon.models import Settings
+        row = db.session.query(Settings.schema_version).first()
+        return int(row[0]) if row and row[0] is not None else 0
+    except Exception:
+        db.session.rollback()
+        return 0
+
+
 def run_migrations(app):
-    """Add any column the models expect but the database is missing."""
+    """Add any column the models expect but the database is missing.
+
+    Skipped entirely once the database records the current SCHEMA_VERSION,
+    which is the whole point: on a serverless platform this runs on every
+    cold start, and a Postgres round trip per column is far too slow to do
+    on the critical path of a request.
+    """
+    if _schema_version() >= SCHEMA_VERSION:
+        return
     for table, column, coltype in _column_specs():
         try:
             have = _existing_columns(table)
@@ -76,6 +102,20 @@ def run_migrations(app):
             db.session.commit()
         except Exception:
             db.session.rollback()
+    try:
+        from aflatoon.models import Settings
+        row = Settings.query.first()
+        if row is None:
+            # A brand new database has no settings row to stamp yet - it is
+            # created by get_settings() further down, after this runs. Create
+            # it here so the version is recorded on the very first boot,
+            # otherwise every cold start would re-run the whole check.
+            from aflatoon.services import get_settings
+            row = get_settings()
+        row.schema_version = SCHEMA_VERSION
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
 
 
 def create_app(config_class=Config):
@@ -110,6 +150,19 @@ def create_app(config_class=Config):
     # Wrapped so that a database that is briefly unreachable fails the
     # individual request instead of stopping the whole app from booting.
     with app.app_context():
+        # On a serverless platform the bundle is read-only, so the SQLite
+        # fallback cannot be created at all. Failing loudly here is the
+        # difference between "DATABASE_URL is not set, see the log" and an
+        # app that boots, serves a login page and then 500s everywhere
+        # behind it while quietly keeping no records.
+        if app.config.get("IS_SERVERLESS") and not app.config.get(
+                "DATABASE_URL", "").startswith("postgres"):
+            raise RuntimeError(
+                "DATABASE_URL is not set to a Postgres URL. On Vercel this "
+                "app cannot use a SQLite file (the bundle is read-only), so "
+                "it will not start. Set DATABASE_URL in the project's "
+                "environment variables.")
+
         try:
             db.create_all()
             run_migrations(app)
@@ -117,7 +170,12 @@ def create_app(config_class=Config):
             s = get_settings()
             if not s.admin_pass_hash:
                 s.set_password(app.config["ADMIN_PASSWORD"])
-                db.session.commit()
+            db.session.commit()
+            if app.config.get("SEED_DEMO_DATA"):
+                from aflatoon.demo_seed import seed_if_empty
+                if seed_if_empty():
+                    s.demo_seeded = True
+                    db.session.commit()
         except Exception:
             db.session.rollback()
             app.logger.exception("Database bootstrap failed - continuing without tables")

@@ -1167,7 +1167,48 @@ def main():
     bcheck("bulk: a code collision does not lose the entry",
            "Created" in r.data.decode() or "Could not save" in r.data.decode())
 
-    total_b = 89 + 46
+    # ---- the two bugs the demo seed exposed ---------------------------
+    # a) restock_intelligence_rows used a list comprehension named `s`,
+    #    which rebound the Settings row assigned above it. The report came
+    #    back completely empty and nothing raised.
+    with app.app_context():
+        rr = restock_intelligence_rows()
+        bcheck("restock: returns rows (the `s` shadowing bug)",
+               len(rr) > 0, f"got {len(rr)} rows")
+        bcheck("restock: every row has a category",
+               all(r.get("category") for r in rr))
+        bcheck("restock: scores are real numbers",
+               all(isinstance(r.get("score"), float) for r in rr))
+
+    # b) the suggested-fund formula divided the whole shop's monthly target
+    #    by 30 and treated it as this category's daily rate, which produced
+    #    restock suggestions in the crores.
+    with app.app_context():
+        from aflatoon.services import get_settings
+        target = float(get_settings().planning_sales_normal or 0)
+        worst = max((r["suggested_fund"] for r in rr), default=0)
+        bcheck("restock: no suggestion is larger than half the monthly target",
+               worst <= target * 0.5 + 0.01, f"fund {worst} vs target {target}")
+        bcheck("restock: no absurd suggestions",
+               worst < 500000, f"fund {worst}")
+
+    # ---- the schema-version marker ------------------------------------
+    # Without it, 143 column checks ran on every cold start: negligible
+    # against a local file, seconds over the network on Vercel.
+    with app.app_context():
+        from aflatoon.models import Settings
+        srow = Settings.query.first()
+        bcheck("schema: version stamped after boot", srow.schema_version is not None,
+               f"got {srow.schema_version}")
+        import aflatoon as _pkg
+        bcheck("schema: version matches the code",
+               srow.schema_version == _pkg.SCHEMA_VERSION,
+               f"db {srow.schema_version} vs code {_pkg.SCHEMA_VERSION}")
+        from aflatoon import _column_specs
+        bcheck("schema: the check covers every model column",
+               len(_column_specs()) > 100, f"{len(_column_specs())} columns")
+
+    total_b = 89 + 46 + 9
     print(f"\n{total_b - bfail}/{total_b} behaviour checks passed")
 
     # ---- the schema matches the models, on a fresh database ---------------

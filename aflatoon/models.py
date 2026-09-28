@@ -88,6 +88,15 @@ class Settings(db.Model):
     opening_done = db.Column(db.Boolean, default=False)
     last_reconcile = db.Column(db.Text)
 
+    # Bumped by the app factory once the column-widening pass has run, so
+    # later boots skip it instead of re-checking every column on every
+    # cold start. See aflatoon/__init__.py SCHEMA_VERSION.
+    schema_version = db.Column(db.Integer, default=0)
+
+    # Set when the sample trading data was loaded, so the interface can say
+    # so plainly rather than leaving him to guess whether a figure is real.
+    demo_seeded = db.Column(db.Boolean, default=False)
+
     admin_user = db.Column(db.String(60), default="admin")
     admin_pass_hash = db.Column(db.String(255), nullable=True)
 

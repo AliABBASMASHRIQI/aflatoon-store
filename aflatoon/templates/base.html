@@ -55,6 +55,9 @@
                padding:8px 12px;font-size:18px;cursor:pointer;line-height:1}
     .scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:55}
 
+    .demo-note{background:#f0f9ff;border:1px solid #bae6fd;border-left:4px solid #0284c7;
+      border-radius:9px;padding:10px 14px;margin:0 0 16px;font-size:13px;color:#075985;
+      line-height:1.5}
     .flashes{list-style:none;padding:0;margin:0 0 18px}
     .flash{padding:11px 14px;border-radius:8px;margin-bottom:10px;font-size:14px;
            border:1px solid transparent}
@@ -124,8 +127,7 @@
     <a href="{{ url_for('core.help_page') }}" class="{{ 'current' if request.endpoint == 'core.help_page' }}">How to use this</a>
     <a href="{{ url_for('settings_view.opening') }}" class="{{ 'current' if request.endpoint == 'settings_view.opening' }}">Opening Position</a>
 
-    <div class="group">Inventory</div>
-    <a href="{{ url_for('items.index') }}" class="{{ 'current' if request.blueprint == 'items' }}">Items</a>
+    <div class="group">Inventory</div>    <a href="{{ url_for('items.index') }}" class="{{ 'current' if request.blueprint == 'items' }}">Items</a>
     <a href="{{ url_for('batches.index') }}" class="{{ 'current' if request.blueprint == 'batches' }}">Purchase Batches</a>
     <a href="{{ url_for('adjustments.index') }}" class="{{ 'current' if request.blueprint == 'adjustments' }}">Stock Adjustments</a>
 
@@ -161,6 +163,11 @@
   <main class="content">
     <button class="nav-toggle" onclick="document.body.classList.toggle('nav-open')"
             aria-label="Menu">&#9776;</button>
+    {% if app_settings and app_settings.demo_seeded %}
+    <p class="demo-note">Sample data is loaded so the screens have something
+      to show. Treat it as practice &mdash; delete anything here before
+      putting real records in.</p>
+    {% endif %}
     {% with flashes = get_flashed_messages(with_categories=true) %}
     {% if flashes %}
     <ul class="flashes">

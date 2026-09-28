@@ -652,8 +652,10 @@ def restock_intelligence_rows() -> list:
 
     in_stock, avg_cost = {}, {}
     # count only what can actually be sold, or the restock advice tells the
-    # owner to re-buy pieces that are damaged, lost, returned or reserved
-    on_rail = [s for s in ITEM_STATUSES if s not in OFF_RAIL_STATUSES]
+    # owner to re-buy pieces that are damaged, lost, returned or reserved.
+    # NB: do not name this loop variable `s` - it shadows the Settings row
+    # assigned above, which silently emptied this whole report.
+    on_rail = [st for st in ITEM_STATUSES if st not in OFF_RAIL_STATUSES]
     for cat, cnt, ac in (db.session.query(Item.category, func.count(Item.id),
                                           func.avg(Item.allocated_cost))
                          .filter(Item.current_status.in_(on_rail))
@@ -703,8 +705,16 @@ def restock_intelligence_rows() -> list:
 
         suggested_fund = 0.0
         if score >= 3 and daily_target:
-            gap_units = max(daily_target * crit - ready, 0)
-            suggested_fund = gap_units * avg_cost.get(cat, 0)
+            # Cap the gap at what this category is actually selling, otherwise a
+            # category moving one piece a day is told it needs months of stock
+            # to hit the whole shop's sales target - which produced suggestions
+            # in the crores. A category only ever restocks towards its own
+            # velocity plus the critical window, and never past half the shop's
+            # monthly target however far behind it is.
+            want_units = daily * crit
+            gap_units = max(min(want_units, max(daily * 60, want_units)) - ready, 0)
+            suggested_fund = min(gap_units * avg_cost.get(cat, 0),
+                                 normal_target * 0.5)
 
         out.append({
             "category": cat,
