@@ -18,6 +18,8 @@ skills/
 *.db
 server.log
 server.err
+demo.log
+demo.err
 instance/*
 !instance/.gitkeep
 .opencode/skills/
