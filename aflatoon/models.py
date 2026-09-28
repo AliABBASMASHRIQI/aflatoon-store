@@ -20,6 +20,11 @@ EXPENSE_CATEGORIES = ["Rent", "Salary", "Electricity", "Packaging", "Repairs", "
 EXPENSE_NATURES = ["Fixed", "Variable"]
 ITEM_STATUSES = ["Unprocessed", "Processing", "Ready for Sale", "Reserved", "Sold",
                  "Returned", "Damaged", "Lost"]
+
+# Statuses that mean "this piece is not available to sell any more".
+# Everything outside this set counts towards stock on hand and towards the
+# restock advice, which is what "unprocessed"/"processing"/"ready" intend.
+OFF_RAIL_STATUSES = ("Sold", "Returned", "Damaged", "Lost", "Reserved")
 ADJUSTMENT_TYPES = ["Physical Count", "Damaged", "Lost", "Found", "Correction"]
 SUPPLIER_TYPES = ["Wholesaler", "Brand", "Manufacturer", "Thrift Vendor", "Other Vendor"]
 LOAN_TYPES = ["Bank Loan", "Gold Loan", "Business Loan", "Borrowed from Person",
@@ -107,7 +112,10 @@ class Supplier(db.Model):
     __tablename__ = "suppliers"
 
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(200), nullable=False)
+    # every item and purchase lot is linked to a supplier BY NAME, so two
+    # rows with the same name make that lookup ambiguous and silently split
+    # a vendor's purchases and payables across two identical rows
+    name = db.Column(db.String(200), nullable=False, unique=True)
     supplier_type = db.Column(db.String(50), default=SUPPLIER_TYPES[0])
     contact_name = db.Column(db.String(120))
     phone = db.Column(db.String(30))
@@ -129,10 +137,16 @@ class Supplier(db.Model):
 
     @property
     def outstanding(self):
-        total = db.session.query(db.func.coalesce(db.func.sum(
-            PurchaseBatch.total_cost - PurchaseBatch.paid_amount), 0)) \
-            .filter(PurchaseBatch.supplier_id == self.id).scalar()
-        return max(total or 0, 0)
+        """What this supplier is still owed, summed per lot.
+
+        Clamped per lot, not on the total. Summing the differences first let
+        one overpaid lot cancel another lot that was genuinely unpaid, so
+        the vendors screen showed 0 while real money was outstanding.
+        """
+        rows = db.session.query(
+            PurchaseBatch.total_cost, PurchaseBatch.paid_amount) \
+            .filter(PurchaseBatch.supplier_id == self.id).all()
+        return sum(max(float(c or 0) - float(p or 0), 0) for c, p in rows)
 
 
 class PurchaseBatch(db.Model):
@@ -199,8 +213,30 @@ class Item(db.Model):
 
     purchase_batch = db.relationship("PurchaseBatch", back_populates="items")
     supplier = db.relationship("Supplier", back_populates="items")
-    sales = db.relationship("Sale", back_populates="item")
-    adjustments = db.relationship("StockAdjustment", back_populates="item")
+    # A deleted item takes its sales and adjustments with it. The child
+    # item_id columns are NOT NULL, so without an explicit cascade
+    # SQLAlchemy tries to set them to NULL and the database refuses the
+    # UPDATE - deleting any piece that had been sold was a 500.
+    sales = db.relationship("Sale", back_populates="item",
+                            cascade="all, delete-orphan")
+    adjustments = db.relationship("StockAdjustment", back_populates="item",
+                                  cascade="all, delete-orphan")
+
+    @property
+    def is_on_rail(self):
+        """True while the piece is genuinely available to sell.
+
+        Sold obviously is not. Nor is anything that has been written off
+        (Damaged/Lost), handed back (Returned), or held back (Reserved) -
+        counting those as stock made the stock total and the restock advice
+        recommend re-buying pieces that no longer existed.
+        """
+        return self.current_status not in OFF_RAIL_STATUSES
+
+    @property
+    def is_written_off(self):
+        """Lost or damaged: the money in this piece is gone, not pending."""
+        return self.current_status in ("Damaged", "Lost")
 
 
 class Sale(db.Model):

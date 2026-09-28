@@ -39,24 +39,59 @@ def index():
                       s.payment_method, "Yes" if s.is_returned else "No"],
         } for s in sales],
         actions=[{"label": "Edit", "endpoint": "sales.edit", "arg": "sale_id"},
-                 {"label": "Delete", "endpoint": "sales.delete", "arg": "sale_id", "delete": True}],
+                 {"label": "Delete", "endpoint": "sales.delete", "arg": "sale_id",
+                  "delete": True,
+                  "confirm": "Delete this sale? The piece goes back on the rail "
+                             "and the cash balance drops by what it fetched."}],
         total=len(sales),
         month_sales=d["month_sales"],
         month_gp=d["gp_mtd"],
     )
 
 
+SALE_PICKER_LIMIT = 500
+
+
+def _pickable_items(limit=SALE_PICKER_LIMIT):
+    """Sellable pieces, newest first.
+
+    Only "Ready for Sale" pieces can be picked. Listing every item meant a
+    store with a few thousand pieces rendered thousands of <option>s and the
+    sale form became unusably slow, and it offered already-sold pieces too.
+    The rest of the stock is reachable by editing the piece's status first.
+    """
+    return (db.session.query(Item.item_id, Item.description,
+                             Item.listed_price, Item.allocated_cost)
+            .filter(Item.current_status == "Ready for Sale")
+            .order_by(Item.item_id.desc()).limit(limit).all())
+
+
+def _item_maps(limit=SALE_PICKER_LIMIT):
+    """(listed price, allocated cost) keyed by item code, for the form JS."""
+    rows = _pickable_items(limit)
+    prices = {}
+    costs = {}
+    for code, _desc, price, cost in rows:
+        prices[code] = float(price or 0)
+        costs[code] = float(cost or 0)
+    return prices, costs
+
+
 def _field_spec():
-    items = db.session.query(Item.item_id, Item.description,
-                             Item.current_status).order_by(Item.item_id).all()
+    items = _pickable_items()
     return [
         {"name": "sale_date", "label": "Sale Date", "type": "date", "required": True},
         {"name": "bill_id", "label": "Bill ID", "type": "text"},
         {"name": "item_sel", "label": "Item (ID - Description)", "type": "select",
-         "choices": [(i, f"{i} - {(d or 'untagged')[:40]} [{st}]") for i, d, st in items]},
-        {"name": "qty", "label": "Qty", "type": "number", "step": "1"},
-        {"name": "listed_price", "label": "Listed Price (₹)", "type": "number", "step": "0.01"},
-        {"name": "discount", "label": "Discount (₹)", "type": "number", "step": "0.01"},
+         "choices": [(i, f"{i} - {(d or 'untagged')[:40]}") for i, d, _p, _c in items]},
+        {"name": "listed_price", "label": "Listed Price (₹)", "type": "number", "step": "0.01",
+         "hint": "Fills in from the item when you pick it."},
+        {"name": "discount", "label": "Discount (₹)", "type": "number", "step": "0.01",
+         "hint": "Or type the final price you agreed below."},
+        {"name": "final_price", "label": "Final Price (₹)", "type": "number", "step": "0.01",
+         "hint": "If a customer haggles, type what they paid here and the "
+                 "discount is worked out for you."},
+        {"name": "qty", "label": "Qty", "type": "number", "step": "1", "min": "1"},
         {"name": "payment_method", "label": "Payment Method", "type": "select",
          "choices": PAYMENT_METHODS},
         {"name": "is_returned", "label": "Return?", "type": "select", "choices": ["No", "Yes"]},
@@ -78,7 +113,23 @@ def _resolve(sale, form):
     sale.qty = max(int(to_float(form.get("qty"), 1)), 1)
     sale.listed_price = to_float(form.get("listed_price"))
     sale.discount = to_float(form.get("discount"))
-    sale.payment_method = form.get("payment_method") or "Cash"
+
+    # Haggling: type what the customer actually paid and the discount is
+    # worked out, so he never has to do the subtraction to record a deal.
+    final_raw = (form.get("final_price") or "").strip()
+    if final_raw:
+        final = to_float(final_raw)
+        if sale.listed_price:
+            sale.discount = max(sale.listed_price - final, 0)
+        else:
+            # no listed price typed: treat the agreed figure as the price
+            sale.listed_price = final
+            sale.discount = 0
+
+    if form.get("payment_method"):
+        sale.payment_method = form.get("payment_method")
+    else:
+        sale.payment_method = "Cash"
     sale.is_returned = (form.get("is_returned") == "Yes")
     sale.notes = form.get("notes")
     if not sale.is_returned:
@@ -124,8 +175,10 @@ def create():
             db.session.rollback()
             flash(f"Error: {e}", "danger")
     values = {"sale_date": _date.today().isoformat(), "qty": 1, "is_returned": "No"}
+    prices, costs = _item_maps()
     return render_template("form.html", form_title="Record Sale",
                            fields=_field_spec(), values=values,
+                           item_prices=prices, item_costs=costs,
                            cancel_url=url_for("sales.index"))
 
 
@@ -159,8 +212,15 @@ def edit(sale_id):
         "is_returned": "Yes" if sale.is_returned else "No",
         "notes": sale.notes or "",
     }
+    prices, costs = _item_maps()
+    if sale.item:
+        # the piece being sold may no longer be "Ready for Sale" (e.g. after
+        # it was marked returned), but its price must still show
+        prices.setdefault(sale.item.item_id, float(sale.item.listed_price or 0))
+        costs.setdefault(sale.item.item_id, float(sale.item.allocated_cost or 0))
     return render_template("form.html", form_title="Edit Sale",
                            fields=_field_spec(), values=values,
+                           item_prices=prices, item_costs=costs,
                            cancel_url=url_for("sales.index"))
 
 

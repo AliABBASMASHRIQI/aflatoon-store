@@ -3,6 +3,8 @@ from datetime import date as _date
 import json
 import re
 
+from sqlalchemy import func
+
 from aflatoon.extensions import db
 from aflatoon.helpers import (login_required, next_id, to_float, to_date, to_bool,
                               date_input, money)
@@ -17,11 +19,15 @@ BULK_GROUPS = 8         # group blocks rendered in the "Groups" tab
 BULK_MAX_ROWS = 300     # hard cap so a stray POST cannot create 100k rows
 
 
-def _block_cost(block_cost, batch_cost_per_item):
-    """A block's own cost wins; a blank one falls back to the lot average."""
-    if block_cost is not None:
-        return block_cost
-    return round(float(batch_cost_per_item or 0), 2)
+def _block_cost(cost_raw, batch_cost_per_item):
+    """A typed cost wins; a blank one falls back to the lot average.
+
+    Never negative: a stray minus sign would otherwise give the piece a
+    negative cost, which inflates every profit figure downstream.
+    """
+    if cost_raw:
+        return max(to_float(cost_raw), 0)
+    return max(round(float(batch_cost_per_item or 0), 2), 0)
 
 
 def _next_item_number() -> int:
@@ -47,7 +53,7 @@ def _fields():
         {"name": "subcategory", "label": "Subcategory", "type": "text"},
         {"name": "supplier_sel", "label": "Supplier", "type": "select",
          "choices": [(s[0], s[0]) for s in suppliers], "optional": True},
-        {"name": "brand_type", "label": "Brand Type", "type": "select", "choices": BRAND_TYPES, "default": "Other"},
+        {"name": "brand_type", "label": "Brand Type", "type": "select", "choices": BRAND_TYPES, "default": "Unbranded"},
         {"name": "brand_name", "label": "Brand Name", "type": "text"},
         {"name": "description", "label": "Description", "type": "textarea"},
         {"name": "size", "label": "Size", "type": "text"},
@@ -56,7 +62,10 @@ def _fields():
         {"name": "allocated_cost", "label": "Allocated Cost (₹)", "type": "number", "step": "0.01"},
         {"name": "listed_price", "label": "Listed Price (₹)", "type": "number", "step": "0.01"},
         {"name": "mrp", "label": "MRP (₹)", "type": "number", "step": "0.01"},
-        {"name": "current_status", "label": "Current Status", "type": "select", "choices": ITEM_STATUSES},
+        {"name": "current_status", "label": "Current Status", "type": "select",
+         "choices": ITEM_STATUSES, "default": "Ready for Sale",
+         "hint": "Damaged or Lost takes the piece off the rail, so it stops "
+                 "counting towards stock value and restock."},
         {"name": "date_ready", "label": "Date Ready", "type": "date"},
         {"name": "date_sold", "label": "Date Sold", "type": "date"},
         {"name": "notes", "label": "Notes", "type": "textarea"},
@@ -80,7 +89,7 @@ def _resolve(obj, form):
     obj.item_type = form.get("item_type") or "Clothing"
     obj.category = form.get("category")
     obj.subcategory = form.get("subcategory")
-    obj.brand_type = form.get("brand_type") or "Other"
+    obj.brand_type = form.get("brand_type") or BRAND_TYPES[0]
     obj.brand_name = form.get("brand_name")
     obj.description = form.get("description")
     obj.size = form.get("size")
@@ -97,20 +106,39 @@ def _resolve(obj, form):
     if obj.current_status == "Sold" and not obj.date_sold:
         from datetime import date
         obj.date_sold = date.today()
+    elif obj.current_status != "Sold" and obj.date_sold:
+        # put back on the rail: keeping the old sale date made "Days Held"
+        # age from a day it was never sold on, forever
+        obj.date_sold = None
     return obj
 
 
 @bp.route("/")
 @login_required
 def index():
-    paginate = int(request.args.get("page", 1))
+    try:
+        paginate = int(request.args.get("page", 1))
+    except (TypeError, ValueError):
+        paginate = 1                      # /items/?page=abc must not be a 500
     q = request.args.get("q", "").strip()
+    status = request.args.get("status", "").strip()
     query = Item.query.order_by(Item.id.desc())
     if q:
-        like = f"%{q}%"
-        query = query.filter(db.or_(
-            Item.description.ilike(like), Item.item_id.ilike(like),
-            Item.category.ilike(like), Item.brand_name.ilike(like)))
+        # strip LIKE wildcards, else a search for "50%" matches everything
+        safe = q.replace("%", "").replace("_", "").strip()
+        if safe:
+            like = f"%{safe}%"
+            query = query.filter(db.or_(
+                Item.description.ilike(like), Item.item_id.ilike(like),
+                Item.category.ilike(like), Item.brand_name.ilike(like)))
+    if status:
+        query = query.filter(Item.current_status == status)
+
+    # counts for the status filter, so it is obvious what is in each bucket
+    by_status = dict(db.session.query(
+        Item.current_status, func.count(Item.id)
+    ).group_by(Item.current_status).all())
+
     items = query.paginate(page=paginate, per_page=50, error_out=False)
 
     return render_template(
@@ -125,10 +153,16 @@ def index():
                       it.size or "-", money(it.listed_price), it.current_status],
         } for it in items.items],
         actions=[{"label": "Edit", "endpoint": "items.edit", "arg": "item_id"},
-                 {"label": "Delete", "endpoint": "items.delete", "arg": "item_id", "delete": True}],
+                 {"label": "Delete", "endpoint": "items.delete", "arg": "item_id",
+                  "delete": True,
+                  "confirm": "Delete this item? Any sales recorded against it "
+                             "will be deleted too, and the cash balance goes "
+                             "back up. This cannot be undone."}],
         pagination=items,
         search_field="q",
         search_placeholder="Search ID, category, description...",
+        status=by_status,
+        status_choices=ITEM_STATUSES,
         total=items.total,
     )
 
@@ -156,7 +190,11 @@ def bulk():
          "cost_per_item": round(float(b.cost_per_item or 0), 2),
          "qty": b.qty_purchased or 0,
          "total_cost": round(float(b.total_cost or 0), 2),
-         "processed": b.processed_qty}
+         "processed": b.processed_qty,
+         # cost already accounted for by pieces entered earlier, so the
+         # form can show what is genuinely still left to enter
+         "entered_cost": round(sum(float(i.allocated_cost or 0)
+                                   for i in b.items), 2)}
         for b in batches])
 
     ctx = dict(batches=batches, batch_json=batch_json, rows=BULK_ROWS,
@@ -189,7 +227,16 @@ def bulk():
             sup = Supplier.query.filter_by(name=ssel).first()
             supplier_id = sup.id if sup else None
 
-        nxt = _next_item_number()
+        # An exact-code collision can only mean two writers at once (an
+        # impatient double-click on Save), since this is the only place
+        # codes are minted. Clear the session and look again so the second
+        # POST picks the next free number instead of dying on the UNIQUE
+        # constraint and losing the whole entry.
+        for _attempt in range(5):
+            nxt = _next_item_number()
+            if not Item.query.filter_by(item_id=f"AFL-{nxt:05d}").first():
+                break
+            db.session.expire_all()
         first_code = f"AFL-{nxt:05d}"
         created, skipped = 0, 0
         capped = False
@@ -235,13 +282,11 @@ def bulk():
 
                 category = gcell("category") or default_cat
                 qty_raw = gcell("qty")
-                qty = int(to_float(qty_raw, 0))
+                qty = max(int(to_float(qty_raw, 0)), 0)
                 cost_raw = gcell("cost")
-                # a blank block cost means "use the lot average"
-                cost = (to_float(cost_raw) if cost_raw
-                        else _block_cost(None, lot_cpi))
-                listed = gcell("listed") or default_listed
-                mrp = gcell("mrp") or default_mrp
+                cost = _block_cost(cost_raw, lot_cpi)
+                listed = max(to_float(gcell("listed") or default_listed), 0)
+                mrp = max(to_float(gcell("mrp") or default_mrp), 0)
 
                 if qty <= 0 or not category:
                     if any([gcell("size"), gcell("colour"), cost_raw,
@@ -274,18 +319,21 @@ def bulk():
                     skipped += 1
                     continue
                 # same rule as groups: blank means the lot average
-                cost = (to_float(cost_raw) if cost_raw
-                        else _block_cost(None, lot_cpi))
+                cost = _block_cost(cost_raw, lot_cpi)
                 add_item(category, cell("subcategory"), desc, size, colour,
-                         cost, listed_raw or default_listed,
-                         mrp_raw or default_mrp)
+                         cost, max(to_float(listed_raw or default_listed), 0),
+                         max(to_float(mrp_raw or default_mrp), 0))
 
         try:
             db.session.commit()
         except Exception as e:
             db.session.rollback()
+            # re-render with what was typed: previously the per-block and
+            # per-row tables came back blank, so a failed save of a 300-piece
+            # entry meant retyping the whole lot
             flash(f"Could not save the batch of items: {e}", "danger")
-            return render_template("bulk_items.html", values=request.form, **ctx)
+            return render_template("bulk_items.html", values=request.form,
+                                   post=request.form, **ctx)
 
         if created:
             last = f"AFL-{nxt - 1:05d}"
@@ -298,9 +346,17 @@ def bulk():
                 msg += f" {skipped} empty {'block' if mode == 'groups' else 'row'}{'s' if skipped != 1 else ''} skipped."
             if capped:
                 msg += f" Stopped at the {BULK_MAX_ROWS} item limit."
-            if batch_obj and created != (batch_obj.qty_purchased or 0):
-                msg += (f" Lot {batch_obj.batch_id} says "
-                        f"{batch_obj.qty_purchased} pieces.")
+            if batch_obj:
+                # compare the lot total, not this POST alone: entering the
+                # last 20 of a 40-piece lot must not say "the lot says 40"
+                now_in = batch_obj.processed_qty
+                want = batch_obj.qty_purchased or 0
+                if now_in < want:
+                    msg += (f" Lot {batch_obj.batch_id} now has {now_in} of "
+                            f"{want} pieces entered.")
+                elif now_in > want:
+                    msg += (f" Careful: lot {batch_obj.batch_id} has "
+                            f"{now_in} pieces but only {want} were bought.")
             flash(msg, "success")
             return redirect(url_for("items.index"))
         flash("Nothing to save - every row was blank.", "warning")
@@ -378,7 +434,27 @@ def edit(item_id):
 @login_required
 def delete(item_id):
     item = Item.query.get_or_404(item_id)
-    db.session.delete(item)
-    db.session.commit()
-    flash(f"Item {item.item_id} deleted.", "info")
+    n_sales = len(item.sales)
+    code = item.item_id
+    # the cash lines have no relationship to the sale, so the ORM cascade
+    # cannot reach them: withdraw them explicitly or the ledger keeps
+    # counting money from a sale that no longer exists
+    from aflatoon.services import unpost_cash
+    for s in item.sales:
+        unpost_cash("sale", s.id)
+    try:
+        # the cascade on Item.sales / Item.adjustments removes those rows;
+        # without it SQLAlchemy tried to NULL their NOT NULL item_id
+        db.session.delete(item)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        flash(f"Could not delete {code}: {e}. Edit the status instead if this "
+              f"was a mistake.", "danger")
+        return redirect(url_for("items.index"))
+    msg = f"Item {code} deleted."
+    if n_sales:
+        msg += (f" {n_sales} sale record{'s' if n_sales != 1 else ''} removed "
+                f"with it, and the money they brought in left the cash balance.")
+    flash(msg, "info")
     return redirect(url_for("items.index"))

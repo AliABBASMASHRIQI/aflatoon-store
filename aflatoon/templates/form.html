@@ -46,6 +46,10 @@
         placeholder="{{ f.placeholder or '' }}">
     {% endif %}
     {% if f.hint %}<p class="hint">{{ f.hint }}</p>{% endif %}
+    {% if f.name == 'final_price' %}
+      <p class="hint live" id="gp-note">Pick the item, then type the price the
+        customer agreed. Cost and profit fill in below.</p>
+    {% endif %}
   </div>
   {% endfor %}
   <div class="entry-actions">
@@ -65,7 +69,76 @@
   .entry-field input:focus,.entry-field select:focus,.entry-field textarea:focus{
     outline:2px solid var(--brand);outline-offset:1px;border-color:var(--brand)}
   .entry-field .hint{font-size:12.5px;color:var(--muted);margin:2px 0 0}
+  .entry-field .hint.live{font-variant-numeric:tabular-nums}
   .entry-actions{display:flex;gap:10px;margin-top:8px;flex-wrap:wrap}
   @media (max-width:640px){ .entry-form{max-width:none} }
 </style>
+{% if item_prices is defined %}
+<script>
+  // Fill the listed price from the piece the owner picked, and keep the
+  // discount / margin line honest as they type a haggled price.
+  var PRICES = {{ item_prices | tojson }};
+  var COSTS = {{ item_costs | tojson if item_costs is defined else '{}' }};
+  var itemSel = document.getElementById('f-item_sel');
+  var priceEl = document.getElementById('f-listed_price');
+  var discEl = document.getElementById('f-discount');
+  var finalEl = document.getElementById('f-final_price');
+  var note = document.getElementById('gp-note');
+
+  function money(n) { return '₹' + Math.round(n).toLocaleString('en-IN'); }
+
+  function currentPrice() {
+    var fp = parseFloat(finalEl && finalEl.value);
+    if (!isNaN(fp) && fp > 0) return fp;
+    var p = parseFloat(priceEl && priceEl.value);
+    var d = parseFloat(discEl && discEl.value);
+    if (isNaN(p) || p <= 0) return null;
+    return Math.max(p - (isNaN(d) ? 0 : d), 0);
+  }
+
+  function refresh() {
+    if (finalEl && discEl) {
+      var fp = parseFloat(finalEl.value);
+      var p = parseFloat(priceEl.value);
+      if (!isNaN(fp) && fp > 0 && !isNaN(p) && p > 0) {
+        discEl.value = Math.max(p - fp, 0);
+      }
+    }
+    var price = currentPrice();
+    if (price === null) { note.textContent = ''; return; }
+    var cost = parseFloat(COSTS[itemSel ? itemSel.value : ''] || 0);
+    if (!cost) {
+      note.textContent = 'Selling for ' + money(price) +
+        '. No cost recorded for this piece, so profit is unknown.';
+      return;
+    }
+    var profit = price - cost;
+    var margin = price > 0 ? (profit / price * 100) : 0;
+    if (profit <= 0) {
+      note.textContent = 'Selling for ' + money(price) + ' but this cost ' +
+        money(cost) + ' — that is ' + money(Math.abs(profit)) +
+        ' below cost. You can still save it.';
+      note.style.color = 'var(--err)';
+    } else {
+      note.textContent = 'Cost ' + money(cost) + ' · you make ' +
+        money(profit) + ' (' + margin.toFixed(0) + '% margin).';
+      note.style.color = '';
+    }
+  }
+
+  if (itemSel) {
+    itemSel.addEventListener('change', function () {
+      var p = PRICES[itemSel.value];
+      if (p !== undefined && p !== null && priceEl && !priceEl.value) {
+        priceEl.value = p;
+      }
+      refresh();
+    });
+  }
+  [priceEl, discEl, finalEl].forEach(function (el) {
+    if (el) el.addEventListener('input', refresh);
+  });
+  refresh();
+</script>
+{% endif %}
 {% endblock %}

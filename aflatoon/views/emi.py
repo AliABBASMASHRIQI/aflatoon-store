@@ -36,7 +36,10 @@ def index():
                   "confirm": "Record this month's EMI as paid?",
                   "fields": [{"name": "payment_method", "title": "Paid using",
                               "choices": ["UPI", "Cash", "Card"]}]},
-                 {"label": "Delete", "endpoint": "emi.delete", "arg": "emi_id", "delete": True}],
+                 {"label": "Delete", "endpoint": "emi.delete", "arg": "emi_id",
+                  "delete": True,
+                  "confirm": "Delete this loan? Every EMI payment recorded "
+                             "against it leaves the cash ledger too."}],
         total=len(emis),
         empty_message=("No loans yet. Use \u201cAdd New\u201d to add each loan or "
                        "EMI you have \u2014 as many as you like, whenever you like."),

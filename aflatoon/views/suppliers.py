@@ -24,7 +24,12 @@ def index():
                       money(s.outstanding), "Yes" if s.is_active else "No"],
         } for s in suppliers],
         actions=[{"label": "Edit", "endpoint": "suppliers.edit", "arg": "sid"},
-                 {"label": "Delete", "endpoint": "suppliers.delete", "arg": "sid", "delete": True}],
+                 {"label": "Delete", "endpoint": "suppliers.delete", "arg": "sid",
+                  "delete": True,
+                  "confirm": "Delete this supplier? Purchase lots and items "
+                             "keep their costs but lose the vendor name, and "
+                             "anything still owed disappears from the "
+                             "outstanding list."}],
         total=len(suppliers),
     )
 
@@ -58,6 +63,18 @@ def create():
 def edit(sid):
     s = Supplier.query.get_or_404(sid)
     if request.method == "POST":
+        name = (request.form.get("name") or "").strip()
+        if not name:
+            # an empty string satisfies NOT NULL, which left a nameless
+            # vendor rendering as a blank row and a blank dropdown option
+            flash("Supplier name cannot be blank.", "danger")
+            return redirect(url_for("suppliers.edit", sid=sid))
+        clash = Supplier.query.filter(Supplier.name == name,
+                                      Supplier.id != s.id).first()
+        if clash:
+            # duplicate names made the name-based lookup ambiguous
+            flash(f"A different supplier is already called {name}.", "danger")
+            return redirect(url_for("suppliers.edit", sid=sid))
         _resolve(s, request.form)
         try:
             db.session.commit()
@@ -87,9 +104,19 @@ def edit(sid):
 def delete(sid):
     s = Supplier.query.get_or_404(sid)
     name = s.name
+    n_batches, n_items = len(s.batches), len(s.items)
+    owed = float(s.outstanding or 0)
     db.session.delete(s)
     db.session.commit()
-    flash(f"Supplier {name} deleted.", "info")
+    # the FKs are nullable, so nothing crashes - but the lots lose their
+    # vendor and the money owed leaves the outstanding list silently
+    msg = f"Supplier {name} deleted."
+    if n_batches or n_items:
+        msg += (f" {n_batches} purchase lot(s) and {n_items} item(s) kept "
+                f"their costs but no longer show a vendor.")
+    if owed:
+        msg += f" You had {money(owed)} outstanding with them - check your records."
+    flash(msg, "info")
     return redirect(url_for("suppliers.index"))
 
 

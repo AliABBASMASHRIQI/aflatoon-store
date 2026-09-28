@@ -24,11 +24,14 @@
 </div>
 
 <form method="post" id="bulk-form">
+  {# rendered server-side so the form still works with JS turned off, and
+     carrying the posted values so a failed save does not wipe the entry #}
+  <input type="hidden" name="row_count" id="row_count"
+         value="{{ post.get('row_count', rows) if post else rows }}">
+  <input type="hidden" name="group_count" id="group_count"
+         value="{{ post.get('group_count', groups) if post else groups }}">
   <input type="hidden" name="entry_mode" id="entry_mode"
-         value="{{ values.get('entry_mode', 'groups') }}">
-  {# rendered server-side so the form still works with JS turned off #}
-  <input type="hidden" name="row_count" id="row_count" value="{{ rows }}">
-  <input type="hidden" name="group_count" id="group_count" value="{{ groups }}">
+         value="{{ post.get('entry_mode', 'groups') if post else 'groups' }}">
 
   <div class="card">
     <div class="panel-head"><h3>1. The lot</h3></div>
@@ -128,22 +131,25 @@
           </tr>
         </thead>
         <tbody id="blocks">
-          {% for i in range(groups) %}
+          {# post lets a failed save come back with the typed rows intact #}
+          {% set nblocks = post.get('group_count')|int if post else groups %}
+          {% for i in range([nblocks, groups]|max) %}
+          {% set b = 'b%d_' % i %}
           <tr>
             <td class="rn">{{ i + 1 }}</td>
-            <td><select name="b{{ i }}_category" class="b-cat">
+            <td><select name="{{ b }}category" class="b-cat">
                   <option value="">---</option>
-                  {% for c in CATEGORIES %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+                  {% for c in CATEGORIES %}<option value="{{ c }}" {% if post and post.get(b ~ 'category') == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
                 </select></td>
-            <td><input name="b{{ i }}_size" class="b-size" list="sizes"></td>
-            <td><input name="b{{ i }}_colour" class="b-colour"></td>
-            <td><input name="b{{ i }}_cost" class="b-cost" inputmode="decimal" placeholder="avg"></td>
-            <td><input name="b{{ i }}_listed" class="b-listed" inputmode="decimal"></td>
-            <td><input name="b{{ i }}_mrp" class="b-mrp" inputmode="decimal"></td>
-            <td><input name="b{{ i }}_description" class="b-desc"></td>
-            <td><input name="b{{ i }}_qty" class="b-qty" inputmode="numeric" placeholder="0"></td>
+            <td><input name="{{ b }}size" class="b-size" list="sizes" value="{{ post.get(b ~ 'size', '') if post else '' }}"></td>
+            <td><input name="{{ b }}colour" class="b-colour" value="{{ post.get(b ~ 'colour', '') if post else '' }}"></td>
+            <td><input name="{{ b }}cost" class="b-cost" inputmode="decimal" placeholder="avg" value="{{ post.get(b ~ 'cost', '') if post else '' }}"></td>
+            <td><input name="{{ b }}listed" class="b-listed" inputmode="decimal" value="{{ post.get(b ~ 'listed', '') if post else '' }}"></td>
+            <td><input name="{{ b }}mrp" class="b-mrp" inputmode="decimal" value="{{ post.get(b ~ 'mrp', '') if post else '' }}"></td>
+            <td><input name="{{ b }}description" class="b-desc" value="{{ post.get(b ~ 'description', '') if post else '' }}"></td>
+            <td><input name="{{ b }}qty" class="b-qty" inputmode="numeric" placeholder="0" value="{{ post.get(b ~ 'qty', '') if post else '' }}"></td>
             <td><button type="button" class="row-btn" title="Remove this group"
-                        onclick="this.closest('tr').remove(); recalcBlocks();">&times;</button></td>
+                        onclick="removeBlock(this)">&times;</button></td>
           </tr>
           {% endfor %}
         </tbody>
@@ -213,19 +219,21 @@
           </tr>
         </thead>
         <tbody id="rows">
-          {% for i in range(rows) %}
+          {% set nrows = post.get('row_count')|int if post else rows %}
+          {% for i in range([nrows, rows]|max) %}
+          {% set r = 'r%d_' % i %}
           <tr>
             <td class="rn">{{ i + 1 }}</td>
-            <td><select name="r{{ i }}_category" class="r-cat">
+            <td><select name="{{ r }}category" class="r-cat">
                   <option value="">---</option>
-                  {% for c in CATEGORIES %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+                  {% for c in CATEGORIES %}<option value="{{ c }}" {% if post and post.get(r ~ 'category') == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
                 </select></td>
-            <td><input name="r{{ i }}_size" class="r-size" list="sizes"></td>
-            <td><input name="r{{ i }}_colour" class="r-colour"></td>
-            <td><input name="r{{ i }}_cost" class="r-cost" inputmode="decimal" placeholder="avg"></td>
-            <td><input name="r{{ i }}_listed" class="r-listed" inputmode="decimal"></td>
-            <td><input name="r{{ i }}_mrp" class="r-mrp" inputmode="decimal"></td>
-            <td><input name="r{{ i }}_description" class="r-desc"></td>
+            <td><input name="{{ r }}size" class="r-size" list="sizes" value="{{ post.get(r ~ 'size', '') if post else '' }}"></td>
+            <td><input name="{{ r }}colour" class="r-colour" value="{{ post.get(r ~ 'colour', '') if post else '' }}"></td>
+            <td><input name="{{ r }}cost" class="r-cost" inputmode="decimal" placeholder="avg" value="{{ post.get(r ~ 'cost', '') if post else '' }}"></td>
+            <td><input name="{{ r }}listed" class="r-listed" inputmode="decimal" value="{{ post.get(r ~ 'listed', '') if post else '' }}"></td>
+            <td><input name="{{ r }}mrp" class="r-mrp" inputmode="decimal" value="{{ post.get(r ~ 'mrp', '') if post else '' }}"></td>
+            <td><input name="{{ r }}description" class="r-desc" value="{{ post.get(r ~ 'description', '') if post else '' }}"></td>
             <td><button type="button" class="row-btn" title="Copy the row above into this one"
                         onclick="copyAbove(this)">&darr;</button></td>
           </tr>
@@ -416,6 +424,33 @@
 
   /* ---------------- groups tab ---------------- */
 
+  // Highest existing bN prefix + 1. Using children.length gave a name that
+  // could already be taken after a row was removed, and two rows submitting
+  // the same field name means one of them is silently discarded on the
+  // server (form.get returns only the first).
+  function nextBlockIndex() {
+    var max = -1;
+    Array.prototype.forEach.call(blockBody.children, function (tr) {
+      var el = tr.querySelector('[name^="b"]');
+      if (!el) return;
+      var m = /^b(\d+)_/.exec(el.name);
+      if (m) { var n = parseInt(m[1], 10); if (n > max) max = n; }
+    });
+    return max + 1;
+  }
+
+  // Renumber every block by DOM position, unconditionally. Skipping rows
+  // with no qty (as this used to) left stale names behind after a delete.
+  function renumberBlocks() {
+    Array.prototype.forEach.call(blockBody.children, function (tr, i) {
+      tr.querySelector('.rn').textContent = i + 1;
+      tr.querySelectorAll('input, select').forEach(function (el) {
+        el.name = el.name.replace(/^b\d+_/, 'b' + i + '_');
+      });
+    });
+    document.getElementById('group_count').value = blockBody.children.length;
+  }
+
   function blockTr(i) {
     var tr = document.createElement('tr');
     tr.innerHTML =
@@ -430,13 +465,26 @@
       '<td><input name="b' + i + '_mrp" class="b-mrp" inputmode="decimal"></td>' +
       '<td><input name="b' + i + '_description" class="b-desc"></td>' +
       '<td><input name="b' + i + '_qty" class="b-qty" inputmode="numeric" placeholder="0"></td>' +
-      '<td><button type="button" class="row-btn" onclick="this.closest(\'tr\').remove(); recalcBlocks();">&times;</button></td>';
+      '<td><button type="button" class="row-btn" title="Remove this group" onclick="removeBlock(this)">&times;</button></td>';
     return tr;
   }
 
+  function removeBlock(btn) {
+    var tr = btn.closest('tr');
+    var qty = parseInt(tr.querySelector('.b-qty').value, 10);
+    var cat = tr.querySelector('.b-cat').value;
+    if (!isNaN(qty) && qty > 0 && cat) {
+      if (!confirm('Remove this group? It adds ' + qty + ' ' + cat +
+                   ' piece' + (qty === 1 ? '' : 's') + '.')) return;
+    }
+    tr.remove();
+    renumberBlocks();
+    recalcBlocks();
+  }
+
   function addBlock() {
-    var i = blockBody.children.length;
-    blockBody.appendChild(blockTr(i));
+    blockBody.appendChild(blockTr(nextBlockIndex()));
+    renumberBlocks();
     recalcBlocks();
   }
 
@@ -446,25 +494,14 @@
     var kids = blockBody.children;
     for (i = 0; i < kids.length; i++) {
       var tr = kids[i];
-      tr.querySelector('.rn').textContent = i + 1;
       var q = parseInt(tr.querySelector('.b-qty').value, 10);
       if (isNaN(q) || q <= 0) continue;
       var cEl = tr.querySelector('.b-cost');
-      // keep the name suffix in step with the row position
-      var cName = cEl.name, lName = tr.querySelector('.b-listed').name,
-          mName = tr.querySelector('.b-mrp').name, qName = tr.querySelector('.b-qty').name,
-          catName = tr.querySelector('.b-cat').name, sName = tr.querySelector('.b-size').name,
-          coName = tr.querySelector('.b-colour').name, dName = tr.querySelector('.b-desc').name;
-      [cName, lName, mName, qName, catName, sName, coName, dName].forEach(function (n) {
-        tr.querySelector('[name="' + n + '"]').name = n.replace(/^b\d+_/, 'b' + i + '_');
-      });
       var unit = cEl.value === '' ? cpi : num(cEl.value);
       pieces += q;
       cost += q * unit;
     }
 
-    // the group_count field is how many blocks the server should read
-    document.getElementById('group_count').value = kids.length;
     document.getElementById('block-count').textContent =
       pieces + (pieces === 1 ? ' piece' : ' pieces');
 
@@ -483,17 +520,27 @@
       warn.className = 'total-warn';
       return;
     }
-    ofEl.textContent = 'of ' + b.qty + ' in the lot';
-    vsEl.textContent = 'of ' + money(b.total_cost);
     document.getElementById('lot-hint').textContent =
       b.batch_id + ' · ' + b.qty + ' pieces · ' + b.processed + ' entered already';
 
-    var dCount = b.qty - pieces;
-    var dCost = b.total_cost - cost;
+    // compare against what is STILL left of the lot, not the whole lot:
+    // pieces already entered in an earlier visit must not be counted again,
+    // or every part-finished lot warns about work that is already done
+    var already = b.processed || 0;
+    var leftQty = Math.max(b.qty - already, 0);
+    var leftCost = Math.max(b.total_cost - (b.entered_cost || 0), 0);
+    ofEl.textContent = 'more, for ' + leftQty + ' still to enter';
+    vsEl.textContent = 'against ' + money(leftCost) + ' of the lot cost left';
+
+    var dCount = leftQty - pieces;
+    var dCost = leftCost - cost;
     if (pieces === 0) {
-      warn.textContent = 'Nothing entered yet.';
+      warn.textContent = already
+        ? 'Nothing added here. The lot already has ' + already + ' of ' + b.qty + ' pieces in.'
+        : 'Nothing entered yet.';
+      if (already) warn.className = 'total-warn ok';
     } else if (Math.abs(dCount) < 0.5 && Math.abs(dCost) < 0.5) {
-      warn.textContent = 'Matches the lot exactly.';
+      warn.textContent = 'That completes the lot exactly.';
       warn.className = 'total-warn ok';
     } else {
       var parts = [];

@@ -30,9 +30,13 @@ def index():
         actions=[{"label": "Edit", "endpoint": "batches.edit", "arg": "batch_id"},
                  {"label": "Pay", "endpoint": "batches.pay", "arg": "batch_id",
                   "confirm": "Record a payment against this lot?"},
-                 {"label": "Delete", "endpoint": "batches.delete", "arg": "batch_id", "delete": True}],
+                 {"label": "Delete", "endpoint": "batches.delete", "arg": "batch_id",
+                  "delete": True,
+                  "confirm": "Delete this purchase lot? Its payment history "
+                             "leaves the cash ledger with it, and the pieces "
+                             "already entered from it lose their link."}],
         total=len(batches),
-        empty_message=("No purchase lots yet. Use \u201cAdd New\u201d each time you "
+        empty_message=("No purchase lots yet. Use “Add New” each time you "
                        "buy stock, then bulk-add the pieces from it."),
     )
 
@@ -46,15 +50,18 @@ def _fields(include_paid=True):
         {"name": "supplier_type", "label": "Supplier Type", "type": "select",
          "choices": SUPPLIER_TYPES},
         {"name": "invoice_ref", "label": "Invoice / Reference", "type": "text"},
-        {"name": "qty_purchased", "label": "Quantity Purchased", "type": "number", "step": "1"},
-        {"name": "total_cost", "label": "Total Purchase Cost (₹,1)", "type": "number", "step": "0.01"},
+        {"name": "qty_purchased", "label": "Quantity Purchased", "type": "number",
+         "step": "1", "min": "0"},
+        {"name": "total_cost", "label": "Total Purchase Cost (₹,1)", "type": "number",
+         "step": "0.01", "min": "0"},
     ]
     if include_paid:
         # Paying a lot is recorded here on the day it happens. Later
         # instalments go through the Pay button so each payment keeps its
         # own date, which is what the cash ledger needs.
         fields += [
-            {"name": "paid_amount", "label": "Paid Amount (₹,1)", "type": "number", "step": "0.01"},
+            {"name": "paid_amount", "label": "Paid Amount (₹,1)", "type": "number",
+             "step": "0.01", "min": "0"},
             {"name": "payment_method", "label": "Paid Using", "type": "select",
              "choices": ["Cash", "UPI", "Card", "Credit/Outstanding"],
              "default": "Cash"},
@@ -70,10 +77,13 @@ def _resolve(batch, form, include_paid=True):
         batch.supplier_id = sup.id if sup else None
     batch.supplier_type = form.get("supplier_type") or "Other Vendor"
     batch.invoice_ref = form.get("invoice_ref")
-    batch.qty_purchased = int(to_float(form.get("qty_purchased")))
-    batch.total_cost = to_float(form.get("total_cost"))
+    # floor at zero: a stray minus sign used to make cost_per_item negative,
+    # and every piece entered against the lot then inherited a negative
+    # cost, which inflated every profit figure downstream
+    batch.qty_purchased = max(int(to_float(form.get("qty_purchased"))), 0)
+    batch.total_cost = max(to_float(form.get("total_cost")), 0)
     if include_paid:
-        batch.paid_amount = to_float(form.get("paid_amount"))
+        batch.paid_amount = max(to_float(form.get("paid_amount")), 0)
     batch.notes = form.get("notes")
     return batch
 
@@ -157,6 +167,12 @@ def pay(batch_id):
         amount = to_float(request.form.get("pay_amount"))
         if amount <= 0:
             flash("Enter an amount greater than zero.", "danger")
+        elif amount > float(batch.outstanding or 0):
+            # without this, an overpayment made this lot's negative
+            # outstanding cancel a genuinely unpaid lot from the same
+            # supplier, so real money stopped being chased
+            flash(f"Too much: only {money(batch.outstanding)} is still owed "
+                  f"on {batch.batch_id}.", "danger")
         else:
             pay_date = to_date(request.form.get("pay_date")) or _date.today()
             method = request.form.get("payment_method") or "UPI"

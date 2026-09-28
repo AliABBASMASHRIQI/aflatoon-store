@@ -43,7 +43,8 @@ from aflatoon.models import (Settings, PurchaseBatch, Supplier, Item, Sale,
                              MonthlyBudget, BUDGET_CATEGORY_FIELDS, CATEGORIES,
                              ITEM_STATUSES, SUPPLIER_TYPES, PAYMENT_METHODS,
                              ITEM_TYPES, EXPENSE_CATEGORIES, EXPENSE_NATURES,
-                             ADJUSTMENT_TYPES, CashTxn, Expense, EmiTracker)
+                             ADJUSTMENT_TYPES, CashTxn, Expense, EmiTracker,
+                             OFF_RAIL_STATUSES)
 
 # ---------------------------------------------------------------------------
 # SQL mirrors of the Sale python properties.
@@ -456,9 +457,12 @@ def stock_summary_rows() -> list:
         sales_value = sum(float(x.final_value or 0) for x in sold)
         gp = sum(float(x.gross_profit or 0) for x in sold)
         is_sold = i.current_status == "Sold"
-        in_stock = 0 if is_sold else 1
+        # Damaged / Lost / Returned / Reserved are all off the rail. Only
+        # "Sold" used to be excluded, so a written-off piece kept its full
+        # cost in stock value and was counted as ready stock to re-buy.
+        in_stock = 1 if i.is_on_rail else 0
 
-        if i.date_sold:
+        if is_sold and i.date_sold:
             days_held = (i.date_sold - i.purchase_date).days if i.purchase_date else None
         elif i.purchase_date:
             days_held = (today - i.purchase_date).days
@@ -467,6 +471,12 @@ def stock_summary_rows() -> list:
 
         if is_sold:
             health = "SOLD"
+        elif i.current_status in ("Damaged", "Lost"):
+            # aged by the write-off date when there is one, so the report
+            # shows how long the money was tied up before it was written off
+            health = "WRITTEN OFF"
+        elif not i.is_on_rail:
+            health = "OFF RAIL"
         elif days_held is None:
             health = "UNKNOWN"
         elif days_held >= dead_days:
@@ -486,6 +496,9 @@ def stock_summary_rows() -> list:
             "in_stock": in_stock,
             "is_sold": is_sold,
             "stock_value": in_stock * float(i.allocated_cost or 0),
+            "written_off": i.is_written_off,
+            "written_off_value": (0 if in_stock
+                                  else float(i.allocated_cost or 0)),
             "health": health,
         })
     return rows
@@ -638,9 +651,12 @@ def restock_intelligence_rows() -> list:
     slow = float(s.slow_moving_days or 60)
 
     in_stock, avg_cost = {}, {}
+    # count only what can actually be sold, or the restock advice tells the
+    # owner to re-buy pieces that are damaged, lost, returned or reserved
+    on_rail = [s for s in ITEM_STATUSES if s not in OFF_RAIL_STATUSES]
     for cat, cnt, ac in (db.session.query(Item.category, func.count(Item.id),
                                           func.avg(Item.allocated_cost))
-                         .filter(Item.current_status != "Sold")
+                         .filter(Item.current_status.in_(on_rail))
                          .group_by(Item.category)):
         key = cat or "Other Clothing"
         in_stock[key] = in_stock.get(key, 0) + int(cnt or 0)

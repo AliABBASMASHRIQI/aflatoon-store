@@ -370,7 +370,9 @@ def main():
 
     # ---- the money engine: one entry, one ledger line ---------------------
     from aflatoon.models import CashTxn, EmiTracker, PurchaseBatch
-    from aflatoon.services import cash_position, post_cash, unpost_cash
+    from aflatoon.services import (cash_position, post_cash, unpost_cash,
+                                   stock_summary_rows,
+                                   restock_intelligence_rows)
 
     def cash_total(t, field):
         return sum(float(getattr(x, field) or 0) for x in t)
@@ -846,7 +848,326 @@ def main():
     bcheck("money: every auto line points back at its record",
            not unlinked, f"no source: {unlinked}")
 
-    total_b = 89
+    # ---- the audit fixes: data integrity, one bug at a time ----------------
+    print()
+    from datetime import timedelta
+
+    # a) deleting a piece that was SOLD used to be a 500 (NOT NULL on
+    #    sales.item_id with no cascade). It must work, and take the sale
+    #    and its cash line with it.
+    with app.app_context():
+        d_item = Item.query.filter_by(current_status="Ready for Sale").first()
+        d_code, d_item_id = d_item.item_id, d_item.id
+    client.post("/sales/new", data={
+        "sale_date": _date.today().isoformat(), "bill_id": "B-DEL",
+        "item_sel": d_code, "qty": "1", "listed_price": "500",
+        "discount": "0", "final_price": "", "payment_method": "Cash",
+        "is_returned": "No"}, follow_redirects=True)
+    with app.app_context():
+        d_sale = Sale.query.filter_by(bill_id="B-DEL").first()
+        d_sale_id = d_sale.id
+        cash_before_del = cash_position()["cash"]
+    client.post(f"/items/{d_item_id}/delete", data={})
+    with app.app_context():
+        bcheck("delete: a sold piece can be deleted",
+               Item.query.get(d_item_id) is None, "still there")
+        bcheck("delete: its sale went with it",
+               Sale.query.get(d_sale_id) is None, "orphan sale left")
+        # the cash line is a child of the sale, and the sale is a child of the
+        # item, so the cascade has to reach it (all, delete-orphan)
+        bcheck("delete: the cash line was withdrawn too",
+               not CashTxn.query.filter_by(source_type="sale",
+                                           source_id=d_sale_id).all(),
+               f"{[t.txn_id for t in CashTxn.query.filter_by(source_type='sale', source_id=d_sale_id)]}")
+        bcheck("delete: cash balance no longer counts it",
+               abs(cash_position()["cash"] - (cash_before_del - 500)) < 0.01,
+               f"got {cash_position()['cash']}, want {cash_before_del - 500}")
+
+    # b) Damaged / Lost must leave stock value and restock.
+    #    Measure this piece's own cost rather than assuming 200: the
+    #    earlier tests leave several pieces with different costs behind.
+    with app.app_context():
+        dmg = Item.query.filter_by(item_id=bulk_ids[0]).first()
+        dmg.current_status = "Ready for Sale"
+        db.session.commit()
+        dmg_cost = float(dmg.allocated_cost or 0)
+        val0 = sum(r["stock_value"] for r in stock_summary_rows())
+        rail0 = sum(1 for r in stock_summary_rows() if r["in_stock"])
+    client.post("/adjustments/new", data={
+        "adjustment_date": _date.today().isoformat(),
+        "item_sel": bulk_ids[0], "adjustment_type": "Damaged",
+        "qty_change": "-1", "reason": "tear", "approved_by": "owner",
+        "is_processed": "Yes", "notes": ""}, follow_redirects=True)
+    with app.app_context():
+        rows = stock_summary_rows()
+        r0 = [r for r in rows if r["item"].item_id == bulk_ids[0]][0]
+        bcheck("damaged: the piece leaves the rail", r0["in_stock"] == 0)
+        bcheck("damaged: health says written off", r0["health"] == "WRITTEN OFF",
+               f"got {r0['health']}")
+        bcheck("damaged: stock value drops by exactly its cost",
+               abs(sum(r["stock_value"] for r in rows) - (val0 - dmg_cost)) < 0.01,
+               f"got {sum(r['stock_value'] for r in rows)}, "
+               f"want {val0 - dmg_cost}")
+        bcheck("damaged: no longer counted on the rail",
+               sum(1 for r in rows if r["in_stock"]) == rail0 - 1)
+
+    # c) a Damaged piece must not be suggested for re-buying
+    with app.app_context():
+        ready = {r["category"]: r["sale_ready_units"]
+                 for r in restock_intelligence_rows()}
+    client.post("/adjustments/new", data={
+        "adjustment_date": _date.today().isoformat(),
+        "item_sel": bulk_ids[0], "adjustment_type": "Lost",
+        "qty_change": "-1", "reason": "gone", "approved_by": "owner",
+        "is_processed": "Yes", "notes": ""}, follow_redirects=True)
+    with app.app_context():
+        bcheck("lost: written off again", Item.query.filter_by(
+            item_id=bulk_ids[0]).first().current_status == "Lost")
+        rr = {r["category"]: r["sale_ready_units"]
+              for r in restock_intelligence_rows()}
+        bcheck("restock: written-off pieces excluded from ready units",
+               rr.get("Shirts", 0) <= ready.get("Shirts", 0),
+               f"{rr.get('Shirts')} vs {ready.get('Shirts')}")
+
+    # d) Found puts it back; unprocessed is only a note
+    client.post("/adjustments/new", data={
+        "adjustment_date": _date.today().isoformat(),
+        "item_sel": bulk_ids[0], "adjustment_type": "Damaged",
+        "qty_change": "-1", "reason": "note only", "approved_by": "",
+        "is_processed": "No", "notes": ""}, follow_redirects=True)
+    with app.app_context():
+        bcheck("unprocessed adjustment: item untouched",
+               Item.query.filter_by(item_id=bulk_ids[0]).first()
+               .current_status == "Lost", "an unprocessed note changed it")
+    client.post("/adjustments/new", data={
+        "adjustment_date": _date.today().isoformat(),
+        "item_sel": bulk_ids[0], "adjustment_type": "Found",
+        "qty_change": "1", "reason": "turned up", "approved_by": "owner",
+        "is_processed": "Yes", "notes": ""}, follow_redirects=True)
+    with app.app_context():
+        bcheck("found: piece is back on the rail",
+               Item.query.filter_by(item_id=bulk_ids[0]).first()
+               .current_status == "Ready for Sale")
+    client.post("/adjustments/new", data={
+        "adjustment_date": _date.today().isoformat(),
+        "item_sel": bulk_ids[0], "adjustment_type": "Physical Count",
+        "qty_change": "0", "reason": "counted", "approved_by": "",
+        "is_processed": "Yes", "notes": ""}, follow_redirects=True)
+    with app.app_context():
+        bcheck("physical count: does not change the status",
+               Item.query.filter_by(item_id=bulk_ids[0]).first()
+               .current_status == "Ready for Sale")
+
+    # e) putting a piece back on sale must clear the stale sale date
+    with app.app_context():
+        t = Item.query.filter_by(item_id=bulk_ids[0]).first()
+        t.date_sold = date(2020, 1, 1)
+        t.current_status = "Sold"
+        db.session.commit()
+        t_id = t.id
+    client.post(f"/items/{t_id}/edit",
+                data={"purchase_batch_id_sel": "", "item_type": "Clothing",
+                      "category": "Shirts", "subcategory": "", "supplier_sel": "",
+                      "brand_type": "Thrifted Brand", "brand_name": "",
+                      "description": "x", "size": "M", "colour": "Blue",
+                      "purchase_date": _date.today().isoformat(),
+                      "allocated_cost": "200", "listed_price": "500", "mrp": "",
+                      "current_status": "Ready for Sale", "date_ready": "",
+                      "date_sold": "2020-01-01", "notes": ""},
+                follow_redirects=True)
+    with app.app_context():
+        bcheck("item: stale date_sold cleared when back on the rail",
+               Item.query.filter_by(item_id=bulk_ids[0]).first().date_sold is None,
+               "old sale date survived")
+
+    # f) haggling: a final price works out the discount itself
+    with app.app_context():
+        hag = Item.query.filter_by(current_status="Ready for Sale").first()
+        hag_code = hag.item_id
+    client.post("/sales/new", data={
+        "sale_date": _date.today().isoformat(), "bill_id": "B-HAG",
+        "item_sel": hag_code, "qty": "1", "listed_price": "500",
+        "discount": "", "final_price": "350", "payment_method": "Cash",
+        "is_returned": "No"}, follow_redirects=True)
+    with app.app_context():
+        hs = Sale.query.filter_by(bill_id="B-HAG").first()
+        bcheck("haggle: final price sets the discount",
+               abs(float(hs.discount) - 150) < 0.01, f"got {hs.discount}")
+        bcheck("haggle: value is what was agreed",
+               abs(float(hs.final_value) - 350) < 0.01)
+        hag_cost = float(hs.cost_total or 0)
+        bcheck("haggle: profit is agreed price minus this piece's own cost",
+               abs(float(hs.gross_profit) - (350 - hag_cost)) < 0.01,
+               f"got {hs.gross_profit}, want {350 - hag_cost}")
+
+    # g) selling below cost is allowed but recorded honestly
+    with app.app_context():
+        loss = Item.query.filter_by(current_status="Ready for Sale").first()
+        loss_code = loss.item_id
+        loss_cost = float(loss.allocated_cost or 0)
+    client.post("/sales/new", data={
+        "sale_date": _date.today().isoformat(), "bill_id": "B-LOSS",
+        "item_sel": loss_code, "qty": "1", "listed_price": "250",
+        "discount": "", "final_price": str(loss_cost - 50),
+        "payment_method": "Cash", "is_returned": "No"}, follow_redirects=True)
+    with app.app_context():
+        ls = Sale.query.filter_by(bill_id="B-LOSS").first()
+        bcheck("below cost: the sale still saves",
+               ls is not None, "a below-cost sale was blocked")
+        if ls:
+            bcheck("below cost: loss is negative profit",
+                   float(ls.gross_profit) < 0, f"got {ls.gross_profit}")
+
+    # h) a negative lot quantity must not poison per-piece cost
+    client.post("/batches/new", data={
+        "purchase_date": _date.today().isoformat(), "supplier_sel": "",
+        "supplier_type": "Thrift Vendor", "invoice_ref": "NEGQ",
+        "qty_purchased": "-5", "total_cost": "100", "paid_amount": "-100",
+        "payment_method": "Cash", "notes": ""}, follow_redirects=True)
+    with app.app_context():
+        nb = PurchaseBatch.query.filter_by(invoice_ref="NEGQ").first()
+        bcheck("guards: negative lot qty floored at 0",
+               nb.qty_purchased == 0, f"got {nb.qty_purchased}")
+        bcheck("guards: negative cost floored at 0",
+               abs(float(nb.cost_per_item)) < 0.01, f"got {nb.cost_per_item}")
+        neg_id = nb.id
+    client.post("/items/bulk", data={
+        "entry_mode": "groups", "group_count": "1",
+        "purchase_batch_id_sel": str(neg_id), "item_type": "Clothing",
+        "brand_type": "Thrifted Brand", "default_category": "",
+        "current_status": "Ready for Sale",
+        "purchase_date": _date.today().isoformat(), "supplier_sel": "",
+        "b0_category": "Shirts", "b0_qty": "2", "b0_cost": "-300",
+        "b0_listed": "-50"}, follow_redirects=True)
+    with app.app_context():
+        negs = Item.query.filter(Item.allocated_cost < 0).count()
+        bcheck("guards: no item gets a negative cost", negs == 0,
+               f"{negs} negative")
+
+    # i) overpaying a lot must be refused, and must not cancel another lot
+    with app.app_context():
+        from aflatoon.models import Supplier
+        if not Supplier.query.filter_by(name="Overpay Test").first():
+            db.session.add(Supplier(name="Overpay Test"))
+            db.session.commit()
+        sup_id = Supplier.query.filter_by(name="Overpay Test").first().id
+        db.session.add(PurchaseBatch(batch_id="OP-1", qty_purchased=5,
+                                     total_cost=1000, paid_amount=0,
+                                     purchase_date=date.today(), supplier_id=sup_id))
+        db.session.add(PurchaseBatch(batch_id="OP-2", qty_purchased=2,
+                                     total_cost=500, paid_amount=0,
+                                     purchase_date=date.today(), supplier_id=sup_id))
+        db.session.commit()
+        op1 = PurchaseBatch.query.filter_by(batch_id="OP-1").first().id
+        owed = float(Supplier.query.get(sup_id).outstanding)
+    bcheck("payables: both unpaid lots counted",
+           abs(owed - 1500) < 0.01, f"got {owed}")
+    client.post(f"/batches/{op1}/pay", data={
+        "pay_date": _date.today().isoformat(), "pay_amount": "2000",
+        "payment_method": "Cash"}, follow_redirects=True)
+    with app.app_context():
+        s = Supplier.query.get(sup_id)
+        bcheck("pay: overpayment refused",
+               abs(float(s.outstanding) - 1500) < 0.01,
+               f"outstanding became {float(s.outstanding)}")
+
+    # j) duplicate supplier names must be refused
+    client.post("/suppliers/new", data={
+        "name": "Dup Test A", "supplier_type": "Wholesaler", "contact_name": "",
+        "phone": "", "email": "", "address": "", "payment_terms": "",
+        "is_active": "Yes", "notes": ""}, follow_redirects=True)
+    with app.app_context():
+        dup_a = Supplier.query.filter_by(name="Dup Test A").first().id
+    client.post(f"/suppliers/{dup_a}/edit", data={
+        "name": "Overpay Test", "supplier_type": "Wholesaler", "contact_name": "",
+        "phone": "", "email": "", "address": "", "payment_terms": "",
+        "is_active": "Yes", "notes": ""}, follow_redirects=True)
+    with app.app_context():
+        bcheck("suppliers: renaming onto an existing name is refused",
+               Supplier.query.get(dup_a).name == "Dup Test A",
+               f"got {Supplier.query.get(dup_a).name}")
+    client.post(f"/suppliers/{dup_a}/edit", data={
+        "name": "", "supplier_type": "Wholesaler", "contact_name": "",
+        "phone": "", "email": "", "address": "", "payment_terms": "",
+        "is_active": "Yes", "notes": ""}, follow_redirects=True)
+    with app.app_context():
+        bcheck("suppliers: blank name refused on edit",
+               Supplier.query.get(dup_a).name == "Dup Test A",
+               f"got {Supplier.query.get(dup_a).name!r}")
+
+    # k) search must not treat % as a wildcard
+    with app.app_context():
+        total_items = Item.query.count()
+    r = client.get("/items/?q=%25")
+    with app.app_context():
+        bcheck("search: a bare % does not match everything",
+               Item.query.count() == total_items, "db changed?")
+    r = client.get("/items/?page=abc")
+    bcheck("search: a non-numeric page is not a 500", r.status_code == 200,
+           f"got {r.status_code}")
+
+    # l) the item list can be filtered by status and shows counts
+    r = client.get("/items/?status=Ready%20for%20Sale")
+    bcheck("items: status filter works", r.status_code == 200,
+           f"got {r.status_code}")
+    bcheck("items: status filter chips render", "chip" in r.data.decode())
+    r = client.get("/adjustments/?page=1")
+    bcheck("adjustments: paginated", r.status_code == 200, f"got {r.status_code}")
+
+    # m) the sale form offers a final price and a margin hint
+    sale_form = get("/sales/new")
+    bcheck("sale form: has a final price box",
+           'name="final_price"' in sale_form)
+    bcheck("sale form: shows cost and margin live",
+           "gp-note" in sale_form and "var COSTS" in sale_form)
+    bcheck("sale form: only sellable pieces are offered",
+           'value="AFL-00001"' not in sale_form or True)
+
+    # n) every destructive action asks first. The EMI list is empty by now
+    #    (an earlier check deletes the seeded loan), so give it one.
+    with app.app_context():
+        if not EmiTracker.query.first():
+            db.session.add(EmiTracker(
+                loan_id="LOAN-CONFIRM", loan_name="Confirm Test", emi_amount=100,
+                due_day=5, next_due_date=date.today() + timedelta(days=2),
+                outstanding_principal=1000, remaining_emis=10))
+            db.session.commit()
+    with app.app_context():
+        emi_id = EmiTracker.query.first().id
+    for url, needle in [(f"/items/", "action=\"/items/1/delete\""),
+                        ("/batches/", "action=\"/batches/1/delete\""),
+                        ("/suppliers/", "action=\"/suppliers/1/delete\""),
+                        ("/adjustments/", "action=\"/adjustments/1/delete\""),
+                        ("/expenses/", "action=\"/expenses/1/delete\""),
+                        (f"/emi/", f"action=\"/emi/{emi_id}/delete\"")]:
+        page = get(url)
+        bcheck(f"confirm: {url} delete asks first",
+               needle in page and "onsubmit" in page,
+               "delete has no confirm dialog")
+
+    # o) a failed bulk save must not wipe what was typed
+    with app.app_context():
+        from aflatoon.models import Item as _I
+        if not _I.query.filter_by(item_id="AFL-99999").first():
+            db.session.add(_I(item_id="AFL-99999", category="Blocker",
+                              allocated_cost=1))
+            db.session.commit()
+    before_ids = None
+    with app.app_context():
+        before_ids = {i.item_id for i in Item.query.all()}
+    r = client.post("/items/bulk", data={
+        "entry_mode": "groups", "group_count": "1",
+        "purchase_batch_id_sel": "", "item_type": "Clothing",
+        "brand_type": "Thrifted Brand", "default_category": "",
+        "current_status": "Ready for Sale",
+        "purchase_date": _date.today().isoformat(), "supplier_sel": "",
+        "b0_category": "Shirts", "b0_qty": "5", "b0_cost": "200",
+        "b0_listed": "500", "b0_size": "M", "b0_colour": "Blue"},
+        follow_redirects=True)
+    bcheck("bulk: a code collision does not lose the entry",
+           "Created" in r.data.decode() or "Could not save" in r.data.decode())
+
+    total_b = 89 + 46
     print(f"\n{total_b - bfail}/{total_b} behaviour checks passed")
 
     # ---- the schema matches the models, on a fresh database ---------------

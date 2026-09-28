@@ -37,7 +37,10 @@ def index():
                       e.payment_method, "Yes" if e.is_paid else "No"],
         } for e in expenses],
         actions=[{"label": "Edit", "endpoint": "expenses.edit", "arg": "exp_id"},
-                 {"label": "Delete", "endpoint": "expenses.delete", "arg": "exp_id", "delete": True}],
+                 {"label": "Delete", "endpoint": "expenses.delete", "arg": "exp_id",
+                  "delete": True,
+                  "confirm": "Delete this expense? The cash balance goes back "
+                             "up by the same amount."}],
         total=len(expenses),
         extra_total=total,
     )
