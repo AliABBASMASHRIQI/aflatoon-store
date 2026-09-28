@@ -27,6 +27,65 @@
   </div>
 </div>
 
+<div class="reconcile">
+  <div class="reconcile-head">
+    <h3>Count your cash</h3>
+    <p>Count the notes in your drawer and the money in your bank, then type what
+       you actually found. A difference means a record is wrong or missing
+       &mdash; that is the whole point of doing it.</p>
+  </div>
+  <form method="post" action="{{ url_for('cash.reconcile') }}" class="reconcile-form">
+    <label for="f-counted_cash">Counted cash</label>
+    <input id="f-counted_cash" type="number" step="0.01" name="counted_cash" required
+           value="{{ reconcile.counted_cash if reconcile.counted_cash is defined else '' }}">
+    <label for="f-counted_bank">Counted bank / UPI</label>
+    <input id="f-counted_bank" type="number" step="0.01" name="counted_bank" required
+           value="{{ reconcile.counted_bank if reconcile.counted_bank is defined else '' }}">
+    <button type="submit" class="btn primary">Check</button>
+  </form>
+  {% if reconcile %}
+  <div class="reconcile-result">
+    <div class="rc-line">Counted on {{ reconcile.date }}</div>
+    <div class="rc-grid">
+      <div>
+        <span class="rc-label">Cash: you counted</span>
+        <span class="rc-val">{{ reconcile.counted_cash|money2 }}</span>
+      </div>
+      <div>
+        <span class="rc-label">app says</span>
+        <span class="rc-val">{{ reconcile.system_cash|money2 }}</span>
+      </div>
+      <div>
+        <span class="rc-label">difference</span>
+        <span class="rc-val {{ 'ok' if reconcile.diff_cash|abs < 0.01 else 'bad' }}">
+          {{ reconcile.diff_cash|money2 }}</span>
+      </div>
+    </div>
+    <div class="rc-grid">
+      <div>
+        <span class="rc-label">Bank: you counted</span>
+        <span class="rc-val">{{ reconcile.counted_bank|money2 }}</span>
+      </div>
+      <div>
+        <span class="rc-label">app says</span>
+        <span class="rc-val">{{ reconcile.system_bank|money2 }}</span>
+      </div>
+      <div>
+        <span class="rc-label">difference</span>
+        <span class="rc-val {{ 'ok' if reconcile.diff_bank|abs < 0.01 else 'bad' }}">
+          {{ reconcile.diff_bank|money2 }}</span>
+      </div>
+    </div>
+    {% if reconcile.diff_cash|abs >= 0.01 or reconcile.diff_bank|abs >= 0.01 %}
+    <p class="rc-hint">Money is missing or extra. Check for a sale or expense you
+      forgot, or a payment recorded with the wrong amount.</p>
+    {% else %}
+    <p class="rc-hint ok">Everything matches. Your books agree with your money.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
 {% if rows %}
 <div class="table-wrap">
 <table>
@@ -55,14 +114,38 @@
   </tbody>
 </table>
 </div>
-<p class="tip">Running balances are calculated from the opening balances in
-  <a href="{{ url_for('settings_view.index') }}">Settings</a>, oldest first.</p>
+<p class="tip">Running balances are calculated from your
+  <a href="{{ url_for('settings_view.opening') }}">opening position</a>, oldest
+  first. Sales, expenses, EMI payments and supplier payments are added here
+  automatically &mdash; this page is only for the ones with no other home.</p>
 {% else %}
-<div class="empty">No entries yet. Use &ldquo;New Entry&rdquo; for the first
-  movement &mdash; or record opening balances in Settings first.</div>
+<div class="empty">No entries yet. Sales, expenses, EMI payments and supplier
+  payments appear here on their own &mdash; you do not need to type them twice.
+  Use this page only for money in or out of your own pocket, transfers, refunds
+  and other income.</div>
 {% endif %}
 
 <style>
+  .reconcile{background:#fff;border:1px solid var(--line);border-radius:12px;
+    padding:16px 18px;margin:18px 0}
+  .reconcile-head h3{margin:0 0 4px;font-size:15px}
+  .reconcile-head p{margin:0 0 12px;font-size:13.5px;color:var(--muted);line-height:1.5;
+    max-width:640px}
+  .reconcile-form{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .reconcile-form label{font-size:13px;font-weight:600}
+  .reconcile-form input{width:150px;padding:9px 11px;border:1px solid var(--line);
+    border-radius:8px;font-size:16px;font-family:inherit}
+  .reconcile-form input:focus{outline:2px solid var(--brand);outline-offset:1px}
+  .reconcile-result{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+  .rc-line{font-size:12.5px;color:var(--muted);margin-bottom:10px}
+  .rc-grid{display:grid;grid-template-columns:repeat(3,auto);gap:22px;margin-bottom:10px}
+  .rc-grid > div{display:grid;gap:2px}
+  .rc-label{font-size:12px;color:var(--muted)}
+  .rc-val{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+  .rc-val.ok{color:var(--ok, #16a34a)}
+  .rc-val.bad{color:var(--err)}
+  .rc-hint{font-size:13px;color:var(--err);margin:6px 0 0}
+  .rc-hint.ok{color:var(--ok, #16a34a)}
   .table-wrap td.r, .table-wrap th.r{text-align:right}
   .nowrap{white-space:nowrap}
   .action-link{color:var(--brand);text-decoration:none;font-size:13px;margin-right:10px;

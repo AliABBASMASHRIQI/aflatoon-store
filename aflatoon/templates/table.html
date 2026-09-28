@@ -56,9 +56,14 @@
       <td class="col-actions">
         {% for a in actions %}
           {% set kw = {a.arg or 'id': row.id} %}
-          {% if a.delete or a.confirm %}
+          {% if a.delete or a.confirm or a.fields %}
             <form method="post" class="inline" action="{{ url_for(a.endpoint, **kw) }}"
-                  onsubmit="return confirm('{{ a.confirm or "Delete this record? This cannot be undone." }}');">
+                  {% if a.confirm %}onsubmit="return confirm('{{ a.confirm }}');"{% endif %}>
+              {% for f in a.fields %}
+                <select name="{{ f.name }}" class="mini-select" title="{{ f.title }}">
+                  {% for c in f.choices %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+                </select>
+              {% endfor %}
               <button type="submit" class="action-link {{ 'danger' if a.delete else '' }}">{{ a.label }}</button>
             </form>
           {% else %}
@@ -88,7 +93,7 @@
 {% endif %}
 
 {% else %}
-<div class="empty">No {{ (title or 'records')|lower }} found.</div>
+<div class="empty">{{ empty_message or ('No ' ~ ((title or 'records')|lower) ~ ' found.') }}</div>
 {% endif %}
 
 <style>
@@ -101,6 +106,9 @@
   .action-link:hover{text-decoration:underline}
   .action-link.danger{color:var(--err)}
   form.inline{display:inline}
+  .mini-select{font-size:12px;padding:3px 5px;border:1px solid var(--line);
+    border-radius:6px;font-family:inherit;background:#fff;margin-right:6px;
+    vertical-align:middle}
   .col-actions{white-space:nowrap}
   .pager{display:flex;align-items:center;justify-content:space-between;gap:12px;
     margin-top:14px;flex-wrap:wrap;font-size:13.5px}

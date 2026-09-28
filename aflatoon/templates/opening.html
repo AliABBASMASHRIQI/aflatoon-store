@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Opening Position{% endblock %}
+{% block content %}
+<div class="topbar">
+  <div>
+    <h1>Where do you stand today?</h1>
+    <div class="sub">Do this once. After this, the app keeps your money correct on its own.</div>
+  </div>
+</div>
+
+<div class="note">
+  <strong>Why this page exists.</strong> Nothing from before today can be brought
+  in &mdash; the last year was never written down, so there is nothing to import.
+  This is the line where the books start. Type in what is true right now, and
+  everything you record from today onwards is counted for you.
+</div>
+
+<form method="post" class="entry-form">
+  <div class="entry-field">
+    <label for="f-opening_date">Date you are starting <span class="req">*</span></label>
+    <input id="f-opening_date" type="date" name="opening_date" required
+      value="{{ s.opening_date and date_input(s.opening_date) or today }}">
+    <p class="hint">Everything you enter after this date counts towards the books.</p>
+  </div>
+
+  <div class="entry-field">
+    <label for="f-starting_cash">Cash in hand today (₹,1) <span class="req">*</span></label>
+    <input id="f-starting_cash" type="number" step="0.01" name="starting_cash" required
+      value="{{ s.starting_cash or '' }}" placeholder="Count the notes in your drawer">
+    <p class="hint">Count it properly. Everything after this is built on top of this number.</p>
+  </div>
+
+  <div class="entry-field">
+    <label for="f-starting_bank_upi">Bank / UPI balance today (₹,1) <span class="req">*</span></label>
+    <input id="f-starting_bank_upi" type="number" step="0.01" name="starting_bank_upi" required
+      value="{{ s.starting_bank_upi or '' }}" placeholder="Check your bank passbook">
+    <p class="hint">The account you use for the shop, plus any UPI or wallet balance.</p>
+  </div>
+
+  <div class="entry-field">
+    <label for="f-opening_payables">Money you still owe suppliers (₹,1)</label>
+    <input id="f-opening_payables" type="number" step="0.01" name="opening_payables"
+      value="{{ s.opening_payables or '' }}" placeholder="0">
+    <p class="hint">Stock you already took but have not paid for yet. Money owed to you is not stock &mdash; leave that out.</p>
+  </div>
+
+  <div class="entry-actions">
+    <button type="submit" class="btn primary">Save and start</button>
+    <a class="btn ghost" href="{{ url_for('dashboard.index') }}">Not now</a>
+  </div>
+</form>
+
+<div class="cards">
+  <div class="card">
+    <div class="panel-head"><h3>Two more things to do</h3></div>
+    <ol class="steps">
+      <li>
+        <strong>Add your loans and EMIs</strong> &mdash;
+        <a href="{{ url_for('emi.index') }}">EMI Tracker</a>. Add every one you
+        have, whenever you like. Marking one paid takes the money out of your
+        bank balance automatically.
+      </li>
+      <li>
+        <strong>Add the clothes you already own</strong> &mdash;
+        <a href="{{ url_for('items.bulk') }}">Add Stock in Bulk</a>. One row is
+        one piece. Do 20&ndash;50 at a time, no rush. You cannot record a sale
+        for a piece that is not in the app, so this happens as you sell.
+      </li>
+    </ol>
+  </div>
+
+  {% if loans %}
+  <div class="card">
+    <div class="panel-head"><h3>Loans already added</h3></div>
+    <p class="muted-note">{{ loans|length }} loan{{ 's' if loans|length != 1 }} on
+      the tracker{% if loans_due %}, {{ loans_due }} due within 5 days{% endif %}.</p>
+    <p><a class="btn ghost" href="{{ url_for('emi.index') }}">Review loans</a></p>
+  </div>
+  {% else %}
+  <div class="card">
+    <div class="panel-head"><h3>No loans added yet</h3></div>
+    <p class="muted-note">That is fine if you have none. If you have any, add
+      them now &mdash; they are the one part of your money that is already
+      known, and they anchor everything else.</p>
+    <p><a class="btn ghost" href="{{ url_for('emi.index') }}">Add a loan</a></p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+<style>
+  .note{background:#f0f9ff;border:1px solid #bae6fd;border-left:4px solid var(--brand);
+    border-radius:10px;padding:14px 16px;font-size:14px;line-height:1.55;margin-bottom:20px;
+    max-width:760px}
+  .entry-form{margin-bottom:24px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+    gap:16px;max-width:900px}
+  .steps{margin:0;padding-left:20px;display:grid;gap:12px;font-size:14px;line-height:1.5}
+  .muted-note{font-size:13.5px;color:var(--muted);line-height:1.5;margin:0 0 12px}
+</style>

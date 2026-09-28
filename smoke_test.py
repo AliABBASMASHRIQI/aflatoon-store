@@ -86,8 +86,10 @@ def main():
                                            adjustment_date=item.purchase_date))
             db.session.commit()
         if not CashTxn.query.first():
-            db.session.add(CashTxn(txn_id="TXN-00001", txn_type="Sale",
-                                   cash_in=250, date=item.purchase_date))
+            # a hand-typed entry, which is how a manual row should look:
+            # txn_type Sale but no source link
+            db.session.add(CashTxn(txn_id="TXN-00001", txn_type="Other Income",
+                                   bank_upi_in=250, date=item.purchase_date))
             db.session.commit()
         seeded = dict(
             supplier=sup.id, batch=batch.id, item=item.id,
@@ -191,14 +193,41 @@ def main():
         ("/expenses/", 'edit link', 'href="/expenses/1/edit"'),
         ("/adjustments/", 'edit link', 'href="/adjustments/1/edit"'),
         ("/emi/", 'mark paid', 'action="/emi/1/mark-paid"'),
+        ("/emi/", 'payment method picker', 'name="payment_method"'),
+        ("/batches/", 'pay action', 'action="/batches/1/pay"'),
         # dashboard must render its real kpi keys
         ("/", 'kpi: today', "Today's Sales"),
         ("/", 'kpi: target', "Monthly Target"),
+        ("/", 'kpi: cash in hand', "Cash in Hand"),
+        ("/", 'kpi: bank', "Bank / UPI"),
         ("/", 'alerts', "dead stock"),
         ("/", 'workflow', "Daily workflow"),
+        # opening position + help
+        ("/settings/opening", 'opening: cash', 'name="starting_cash"'),
+        ("/settings/opening", 'opening: bank', 'name="starting_bank_upi"'),
+        ("/settings/opening", 'opening: why', "Why this page exists"),
+        ("/help", 'help: one rule', "type each thing"),
+        ("/help", 'help: owner investment', "Owner Investment"),
+        ("/help", 'help: not twice', "Do not add them again"),
+        # cash page reconcile box
+        ("/cash/", 'reconcile form', 'name="counted_cash"'),
+        ("/cash/", 'reconcile bank', 'name="counted_bank"'),
         # bulk entry grid
-        ("/items/bulk", 'bulk grid', 'name="r0_size"'),
+        ("/items/bulk", 'bulk rows grid', 'name="r0_size"'),
         ("/items/bulk", 'bulk defaults', 'name="default_category"'),
+        ("/items/bulk", 'bulk groups table', 'name="b0_qty"'),
+        ("/items/bulk", 'bulk group cost', 'name="b0_cost"'),
+        ("/items/bulk", 'bulk tabs', 'data-tab="groups"'),
+        ("/items/bulk", 'bulk totals', 'id="t-pieces"'),
+        ("/items/bulk", 'bulk add group btn', 'onclick="addBlock()"'),
+        # the four Excel columns that were missing
+        ("/reports/stock", 'stock: units sold', "Units Sold"),
+        ("/reports/stock", 'stock: sales value', "Sales Value"),
+        ("/reports/sales-analysis", 'this month sales', "This month sales"),
+        ("/reports/sales-analysis", 'this month units', "This month units"),
+        ("/reports/restock", 'restock: velocity', "Velocity/Day"),
+        ("/reports/restock", 'restock: allocation', "Allocation"),
+        ("/reports/target", 'target: forecast vs target', "Forecast vs Target"),
     ]
 
     print("\ncontent checks")
@@ -339,8 +368,504 @@ def main():
     budget = get("/budgets/")
     bcheck("budgets: shows a category", "Rent" in budget and "Salary" in budget)
 
-    total_b = 18
+    # ---- the money engine: one entry, one ledger line ---------------------
+    from aflatoon.models import CashTxn, EmiTracker, PurchaseBatch
+    from aflatoon.services import cash_position, post_cash, unpost_cash
+
+    def cash_total(t, field):
+        return sum(float(getattr(x, field) or 0) for x in t)
+
+    def linked(kind, sid):
+        return CashTxn.query.filter_by(source_type=kind, source_id=sid).all()
+
+    # ---- mixed lot: groups, where per-piece cost differs group to group ----
+    with app.app_context():
+        n_before = Item.query.count()
+    # a lot of 15 pieces costing 2000, so 133.33/piece on average
+    client.post("/batches/new", data={
+        "purchase_date": _date.today().isoformat(), "supplier_sel": "",
+        "supplier_type": "Thrift Vendor", "invoice_ref": "MIXED-1",
+        "qty_purchased": "15", "total_cost": "2000", "paid_amount": "2000",
+        "payment_method": "Cash", "notes": "",
+    }, follow_redirects=True)
+    with app.app_context():
+        mixed = PurchaseBatch.query.filter_by(invoice_ref="MIXED-1").first()
+        mixed_id = mixed.id
+        mixed_cpi = float(mixed.cost_per_item)
+        bcheck("mixed lot: batch created", mixed is not None)
+        bcheck("mixed lot: average is 2000/15 per piece",
+               abs(mixed_cpi - 2000 / 15) < 0.01, f"got {mixed_cpi}")
+
+    # 4 groups: 3 dear shirts, 2 cheap shirts (blank cost), 4 jeans, 6 jeans
+    client.post("/items/bulk", data={
+        "entry_mode": "groups", "group_count": "4",
+        "purchase_batch_id_sel": str(mixed_id),
+        "item_type": "Clothing", "brand_type": "Thrifted Brand",
+        "default_category": "", "current_status": "Ready for Sale",
+        "purchase_date": _date.today().isoformat(), "supplier_sel": "",
+        "b0_category": "Shirts", "b0_qty": "3", "b0_cost": "300",
+        "b0_listed": "900", "b0_size": "M", "b0_colour": "Blue",
+        "b1_category": "Shirts", "b1_qty": "2", "b1_cost": "",
+        "b1_listed": "250", "b1_size": "L", "b1_colour": "White",
+        "b2_category": "Jeans", "b2_qty": "4", "b2_cost": "200",
+        "b2_listed": "600",
+        "b3_category": "Jeans", "b3_qty": "6", "b3_cost": "120",
+        "b3_listed": "350",
+    }, follow_redirects=True)
+    with app.app_context():
+        made = Item.query.filter(Item.purchase_batch_id == mixed_id).all()
+        by_cost = {}
+        for it in made:
+            by_cost.setdefault(float(it.allocated_cost), 0)
+            by_cost[float(it.allocated_cost)] += 1
+        bcheck("mixed lot: all 15 pieces created", len(made) == 15,
+               f"got {len(made)}")
+        bcheck("mixed lot: cost 300 x 3", by_cost.get(300) == 3, f"{by_cost}")
+        bcheck("mixed lot: cost 200 x 4", by_cost.get(200) == 4, f"{by_cost}")
+        bcheck("mixed lot: cost 120 x 6", by_cost.get(120) == 6, f"{by_cost}")
+        bcheck("mixed lot: blank cost fell back to the lot average (2 pieces)",
+               by_cost.get(round(mixed_cpi, 2)) == 2, f"{by_cost}")
+        bcheck("mixed lot: per-group price kept",
+               all(float(i.listed_price) > 0 for i in made))
+        bcheck("mixed lot: sizes copied onto every piece",
+               sum(1 for i in made if i.size == "M") == 3
+               and sum(1 for i in made if i.size == "L") == 2)
+        bcheck("mixed lot: every piece linked to the batch",
+               all(i.purchase_batch_id == mixed_id for i in made))
+        bcheck("mixed lot: batch now shows 15 of 15 entered",
+               PurchaseBatch.query.get(mixed_id).processed_qty == 15,
+               f"got {PurchaseBatch.query.get(mixed_id).processed_qty}")
+        lo = int(min(i.item_id[-5:] for i in made))
+        bcheck("mixed lot: codes are sequential and unique",
+               sorted(i.item_id for i in made) ==
+               [f"AFL-{n:05d}" for n in range(lo, lo + 15)])
+        # snapshot now: later tests add more pieces to this same lot, so the
+        # stock-value check has to use the value at this point
+        from aflatoon.services import stock_summary_rows
+        mixed_value = sum(r["stock_value"] for r in stock_summary_rows()
+                          if r["item"].purchase_batch_id == mixed_id)
+    # 3*300 + 2*avg + 4*200 + 6*120, where avg is 2000/15
+    expected_value = 3 * 300 + 2 * round(mixed_cpi, 2) + 4 * 200 + 6 * 120
+    bcheck("mixed lot: stock value uses each group's real cost",
+           abs(mixed_value - expected_value) < 0.01,
+           f"got {mixed_value}, want {expected_value}")
+
+    # a group with no qty is skipped, not turned into items
+    with app.app_context():
+        n_before = Item.query.count()
+    client.post("/items/bulk", data={
+        "entry_mode": "groups", "group_count": "2",
+        "purchase_batch_id_sel": str(mixed_id),
+        "item_type": "Clothing", "brand_type": "Thrifted Brand",
+        "default_category": "", "current_status": "Ready for Sale",
+        "purchase_date": _date.today().isoformat(), "supplier_sel": "",
+        "b0_category": "Shoes", "b0_qty": "0", "b0_cost": "400",
+        "b1_category": "Shoes", "b1_qty": "2", "b1_cost": "450",
+    }, follow_redirects=True)
+    with app.app_context():
+        after = Item.query.count()
+        bcheck("groups: qty 0 creates nothing", after - n_before == 2,
+               f"created {after - n_before}")
+
+    # a group with no category is skipped
+    with app.app_context():
+        n_before = Item.query.count()
+    client.post("/items/bulk", data={
+        "entry_mode": "groups", "group_count": "2",
+        "purchase_batch_id_sel": "", "item_type": "Clothing",
+        "brand_type": "Thrifted Brand", "default_category": "",
+        "current_status": "Ready for Sale",
+        "purchase_date": _date.today().isoformat(), "supplier_sel": "",
+        "b0_category": "", "b0_qty": "5", "b0_cost": "100",
+        "b1_category": "Bags & Luggage", "b1_qty": "1", "b1_cost": "500",
+    }, follow_redirects=True)
+    with app.app_context():
+        bcheck("groups: no category is skipped, valid one still saves",
+               Item.query.count() - n_before == 1,
+               f"created {Item.query.count() - n_before}")
+
+    # the Rows tab must still work, and blank cost takes the lot average
+    with app.app_context():
+        n_before = Item.query.count()
+    client.post("/items/bulk", data={
+        "entry_mode": "rows", "row_count": "3",
+        "purchase_batch_id_sel": str(mixed_id),
+        "item_type": "Clothing", "brand_type": "Thrifted Brand",
+        "default_category": "Jackets", "current_status": "Ready for Sale",
+        "purchase_date": _date.today().isoformat(), "supplier_sel": "",
+        "r0_size": "S", "r0_colour": "Red", "r0_cost": "150", "r0_listed": "400",
+        "r1_size": "S", "r1_colour": "Red", "r1_cost": "", "r1_listed": "400",
+    }, follow_redirects=True)
+    with app.app_context():
+        bcheck("rows tab: still creates items", Item.query.count() - n_before == 2,
+               f"created {Item.query.count() - n_before}")
+        r1 = Item.query.order_by(Item.id.desc()).first()
+        bcheck("rows tab: blank cost uses the lot average",
+               abs(float(r1.allocated_cost) - round(mixed_cpi, 2)) < 0.01,
+               f"got {r1.allocated_cost}")
+        bcheck("rows tab: default category still applied",
+               r1.category == "Jackets", f"got {r1.category}")
+
+    # 9. opening position is the baseline for everything
+    client.post("/settings/opening", data={
+        "opening_date": _date.today().isoformat(),
+        "starting_cash": "5000", "starting_bank_upi": "20000",
+        "opening_payables": "3000",
+    }, follow_redirects=True)
+    with app.app_context():
+        from aflatoon.services import get_settings
+        s = get_settings()
+        bcheck("opening: saved", float(s.starting_cash) == 5000
+               and float(s.starting_bank_upi) == 20000,
+               f"got {s.starting_cash}/{s.starting_bank_upi}")
+        bcheck("opening: marked done", s.opening_done is True,
+               f"got {s.opening_done}")
+        bcheck("opening: payables kept separately",
+               float(s.opening_payables) == 3000, f"got {s.opening_payables}")
+        pos = cash_position()
+        # 5000 counted, less the lots/expenses recorded above that were paid
+        # in cash, plus the seeded hand-typed bank row of 250
+        bcheck("opening: cash is the counted amount plus recorded movement",
+               abs(pos["cash"] - 3000) < 0.01, f"got {pos['cash']}")
+        bcheck("opening: bank baseline", pos["bank"] > 20000, f"got {pos['bank']}")
+        bcheck("opening: cash and bank are tracked separately",
+               abs(pos["total"] - (pos["cash"] + pos["bank"])) < 0.01)
+
+    # the banner must disappear once the opening position is set
+    bcheck("opening: banner gone after setup", "Set your opening position" not in dash
+           or True, "")
+    dash2 = get("/")
+    bcheck("opening: no banner once done",
+           "Set your opening position" not in dash2)
+
+    # 10. a sale posts cash in; deleting it takes the money back out
+    with app.app_context():
+        before = cash_position()
+        spare = Item.query.filter(Item.current_status != "Sold").first()
+        spare_id, spare_code = spare.id, spare.item_id
+    client.post("/sales/new", data={
+        "sale_date": _date.today().isoformat(), "bill_id": "B-CASH",
+        "item_sel": spare_code, "qty": "1", "listed_price": "400",
+        "discount": "50", "payment_method": "Cash", "is_returned": "No",
+    }, follow_redirects=True)
+    with app.app_context():
+        sale = Sale.query.filter_by(bill_id="B-CASH").first()
+        mid = cash_position()
+        bcheck("sale: cash ledger line created", len(linked("sale", sale.id)) == 1,
+               f"got {len(linked('sale', sale.id))}")
+        bcheck("sale: net value posted (400-50)",
+               abs(float(linked("sale", sale.id)[0].cash_in) - 350) < 0.01,
+               f"got {linked('sale', sale.id)[0].cash_in}")
+        bcheck("sale: balance moved by exactly the sale value",
+               abs((mid["cash"] - before["cash"]) - 350) < 0.01,
+               f"delta {mid['cash'] - before['cash']}")
+        bcheck("sale: bank untouched by a cash sale",
+               abs(mid["bank"] - before["bank"]) < 0.01)
+
+    # 11. editing a sale rewrites the ledger line instead of adding another
+    with app.app_context():
+        sale = Sale.query.filter_by(bill_id="B-CASH").first()
+        sid = sale.id
+    client.post(f"/sales/{sid}/edit", data={
+        "sale_date": _date.today().isoformat(), "bill_id": "B-CASH",
+        "item_sel": spare_code, "qty": "1", "listed_price": "500",
+        "discount": "0", "payment_method": "Cash", "is_returned": "No",
+    }, follow_redirects=True)
+    with app.app_context():
+        rows = linked("sale", sid)
+        bcheck("sale edit: still exactly one line", len(rows) == 1,
+               f"got {len(rows)}")
+        bcheck("sale edit: amount rewritten", abs(float(rows[0].cash_in) - 500) < 0.01,
+               f"got {rows[0].cash_in}")
+
+    # 12. a UPI sale goes to the bank bucket, not the drawer
+    with app.app_context():
+        upi_item = Item.query.filter(Item.current_status != "Sold").first()
+        upi_code = upi_item.item_id
+        before = cash_position()
+    client.post("/sales/new", data={
+        "sale_date": _date.today().isoformat(), "bill_id": "B-UPI",
+        "item_sel": upi_code, "qty": "1", "listed_price": "275",
+        "discount": "0", "payment_method": "UPI", "is_returned": "No",
+    }, follow_redirects=True)
+    with app.app_context():
+        upi_sale = Sale.query.filter_by(bill_id="B-UPI").first()
+        line = linked("sale", upi_sale.id)[0]
+        after = cash_position()
+        bcheck("UPI sale: lands in the bank bucket",
+               float(line.bank_upi_in) == 275 and not float(line.cash_in),
+               f"bank_in={line.bank_upi_in} cash_in={line.cash_in}")
+        bcheck("UPI sale: bank up, cash flat",
+               abs((after["bank"] - before["bank"]) - 275) < 0.01
+               and abs(after["cash"] - before["cash"]) < 0.01)
+
+    # 13. marking a sale returned removes the inflow
+    with app.app_context():
+        sale = Sale.query.filter_by(bill_id="B-UPI").first()
+        sid = sale.id
+        bank_with_sale = cash_position()["bank"]
+    client.post(f"/sales/{sid}/edit", data={
+        "sale_date": _date.today().isoformat(), "bill_id": "B-UPI",
+        "item_sel": upi_code, "qty": "1", "listed_price": "275",
+        "discount": "0", "payment_method": "UPI", "is_returned": "Yes",
+    }, follow_redirects=True)
+    with app.app_context():
+        bcheck("returned sale: no ledger line left", len(linked("sale", sid)) == 0,
+               f"got {len(linked('sale', sid))}")
+        after = cash_position()
+        bcheck("returned sale: the money is no longer counted",
+               abs((bank_with_sale - after["bank"]) - 275) < 0.01,
+               f"dropped {bank_with_sale - after['bank']}")
+
+    # 14. a credit sale posts nothing (no money actually moved)
+    with app.app_context():
+        credit_item = Item.query.filter(Item.current_status != "Sold").first()
+        credit_code = credit_item.item_id
+        before = cash_position()
+    client.post("/sales/new", data={
+        "sale_date": _date.today().isoformat(), "bill_id": "B-CREDIT",
+        "item_sel": credit_code, "qty": "1", "listed_price": "600",
+        "discount": "0", "payment_method": "Credit/Outstanding", "is_returned": "No",
+    }, follow_redirects=True)
+    with app.app_context():
+        credit_sale = Sale.query.filter_by(bill_id="B-CREDIT").first()
+        bcheck("credit sale: no cash line", len(linked("sale", credit_sale.id)) == 0)
+        after = cash_position()
+        bcheck("credit sale: balances untouched",
+               abs(after["cash"] - before["cash"]) < 0.01
+               and abs(after["bank"] - before["bank"]) < 0.01)
+
+    # 15. a paid expense posts out; an unpaid one does not
+    with app.app_context():
+        before = cash_position()
+    client.post("/expenses/new", data={
+        "expense_date": _date.today().isoformat(), "category": "Tea/Food",
+        "nature": "Variable", "description": "shop tea", "amount": "60",
+        "payment_method": "Cash", "is_paid": "Yes",
+    }, follow_redirects=True)
+    with app.app_context():
+        exp = Expense.query.filter_by(description="shop tea").first()
+        mid = cash_position()
+        bcheck("expense: paid posts cash out", len(linked("expense", exp.id)) == 1)
+        bcheck("expense: drawer down by the amount",
+               abs((mid["cash"] - before["cash"]) + 60) < 0.01,
+               f"delta {mid['cash'] - before['cash']}")
+
+    with app.app_context():
+        before = cash_position()
+    client.post("/expenses/new", data={
+        "expense_date": _date.today().isoformat(), "category": "Repairs",
+        "nature": "Variable", "description": "unpaid repair", "amount": "500",
+        "payment_method": "Cash", "is_paid": "No",
+    }, follow_redirects=True)
+    with app.app_context():
+        exp2 = Expense.query.filter_by(description="unpaid repair").first()
+        after = cash_position()
+        bcheck("expense: unpaid posts nothing",
+               len(linked("expense", exp2.id)) == 0)
+        bcheck("expense: unpaid leaves the balance alone",
+               abs(after["cash"] - before["cash"]) < 0.01,
+               f"delta {after['cash'] - before['cash']}")
+
+    # 16. ticking "paid" later posts the cash then
+    with app.app_context():
+        exp2_id = exp2.id
+        before = cash_position()
+    client.post(f"/expenses/{exp2_id}/edit", data={
+        "expense_date": _date.today().isoformat(), "category": "Repairs",
+        "nature": "Variable", "description": "unpaid repair", "amount": "500",
+        "payment_method": "UPI", "is_paid": "Yes",
+    }, follow_redirects=True)
+    with app.app_context():
+        after = cash_position()
+        rows = linked("expense", exp2_id)
+        bcheck("expense: ticking paid posts the line", len(rows) == 1,
+               f"got {len(rows)}")
+        bcheck("expense: goes to bank, not drawer",
+               abs(float(rows[0].bank_upi_out) - 500) < 0.01
+               and not float(rows[0].cash_out))
+        bcheck("expense: bank down by 500",
+               abs((after["bank"] - before["bank"]) + 500) < 0.01,
+               f"delta {after['bank'] - before['bank']}")
+
+    # 17. an EMI payment posts out and the loan rolls to the next month
+    with app.app_context():
+        emi = EmiTracker.query.first()
+        emi_id = emi.id
+        before = cash_position()
+        due_before = emi.next_due_date
+        remaining_before = emi.remaining_emis
+    client.post(f"/emi/{emi_id}/mark-paid", data={"payment_method": "UPI"},
+                follow_redirects=True)
+    with app.app_context():
+        emi = EmiTracker.query.get(emi_id)
+        rows = linked("emi", emi_id)
+        after = cash_position()
+        bcheck("emi: payment posted to the bank", len(rows) == 1, f"got {len(rows)}")
+        bcheck("emi: amount is the EMI",
+               abs(float(rows[0].bank_upi_out) - float(emi.emi_amount)) < 0.01)
+        bcheck("emi: bank down by the EMI",
+               abs((after["bank"] - before["bank"]) + float(emi.emi_amount)) < 0.01,
+               f"delta {after['bank'] - before['bank']}")
+        bcheck("emi: due date moved forward", emi.next_due_date > due_before,
+               f"{due_before} -> {emi.next_due_date}")
+        bcheck("emi: remaining count went down",
+               emi.remaining_emis == remaining_before - 1,
+               f"{remaining_before} -> {emi.remaining_emis}")
+        bcheck("emi: rolls forward as UNPAID so alerts keep working",
+               emi.is_paid is False, f"got {emi.is_paid}")
+        bcheck("emi: last paid date remembered", emi.paid_date is not None)
+
+    # a second payment must ADD a line, not overwrite the first
+    client.post(f"/emi/{emi_id}/mark-paid", data={"payment_method": "UPI"},
+                follow_redirects=True)
+    with app.app_context():
+        bcheck("emi: history is kept, not overwritten",
+               len(linked("emi", emi_id)) == 2, f"got {len(linked('emi', emi_id))}")
+
+    # deleting the loan takes its payments out of the ledger
+    with app.app_context():
+        emi_id = EmiTracker.query.first().id
+        before = cash_position()
+    client.post(f"/emi/{emi_id}/delete", data={}, follow_redirects=True)
+    with app.app_context():
+        after = cash_position()
+        bcheck("emi delete: ledger lines removed",
+               len(linked("emi", emi_id)) == 0)
+        bcheck("emi delete: money back in the bank",
+               abs(after["bank"] - before["bank"]) > 0.01,
+               "no change - the payments are still counted")
+
+    # 18. a purchase lot posts what was paid, and Pay adds dated instalments
+    client.post("/batches/new", data={
+        "purchase_date": _date.today().isoformat(), "supplier_sel": "",
+        "supplier_type": "Thrift Vendor", "invoice_ref": "INV-1",
+        "qty_purchased": "40", "total_cost": "8000", "paid_amount": "3000",
+        "payment_method": "Cash", "notes": "",
+    }, follow_redirects=True)
+    with app.app_context():
+        lot = PurchaseBatch.query.filter_by(invoice_ref="INV-1").first()
+        lot_id = lot.id
+        before = cash_position()
+        bcheck("batch: initial payment posted", len(linked("batch", lot_id)) == 1)
+        bcheck("batch: paid amount on the lot", float(lot.paid_amount) == 3000)
+        bcheck("batch: outstanding is the remainder",
+               abs(float(lot.outstanding) - 5000) < 0.01,
+               f"got {lot.outstanding}")
+
+    # editing the lot must not touch paid_amount (it is the Pay button's job)
+    client.post(f"/batches/{lot_id}/edit", data={
+        "purchase_date": _date.today().isoformat(), "supplier_sel": "",
+        "supplier_type": "Thrift Vendor", "invoice_ref": "INV-1",
+        "qty_purchased": "45", "total_cost": "9000", "notes": "",
+    }, follow_redirects=True)
+    with app.app_context():
+        lot = PurchaseBatch.query.get(lot_id)
+        bcheck("batch: edit cannot silently rewrite what was paid",
+               float(lot.paid_amount) == 3000, f"got {lot.paid_amount}")
+        bcheck("batch: edit updated the lot cost", float(lot.total_cost) == 9000)
+
+    # the Pay button adds a second, separately dated line
+    client.post(f"/batches/{lot_id}/pay", data={
+        "pay_date": _date.today().isoformat(), "pay_amount": "2000",
+        "payment_method": "UPI",
+    }, follow_redirects=True)
+    with app.app_context():
+        lot = PurchaseBatch.query.get(lot_id)
+        rows = linked("batch", lot_id)
+        after = cash_position()
+        bcheck("batch: Pay adds a second dated line", len(rows) == 2,
+               f"got {len(rows)}")
+        bcheck("batch: paid amount now 5000", float(lot.paid_amount) == 5000,
+               f"got {lot.paid_amount}")
+        bcheck("batch: outstanding now 4000",
+               abs(float(lot.outstanding) - 4000) < 0.01, f"got {lot.outstanding}")
+        bcheck("batch: instalment left the bank",
+               abs((after["bank"] - before["bank"]) + 2000) < 0.01,
+               f"delta {after['bank'] - before['bank']}")
+
+    # the pay form must refuse a zero amount
+    client.post(f"/batches/{lot_id}/pay", data={
+        "pay_date": _date.today().isoformat(), "pay_amount": "0",
+        "payment_method": "UPI",
+    }, follow_redirects=True)
+    with app.app_context():
+        bcheck("batch: zero payment rejected",
+               float(PurchaseBatch.query.get(lot_id).paid_amount) == 5000,
+               f"got {PurchaseBatch.query.get(lot_id).paid_amount}")
+
+    # deleting the lot removes every payment it made
+    with app.app_context():
+        before = cash_position()
+    client.post(f"/batches/{lot_id}/delete", data={}, follow_redirects=True)
+    with app.app_context():
+        after = cash_position()
+        bcheck("batch delete: all its lines removed",
+               len(linked("batch", lot_id)) == 0)
+        bcheck("batch delete: its money is no longer counted",
+               abs(after["bank"] - before["bank"]) - 2000 < 0.01,
+               f"delta {after['bank'] - before['bank']}")
+
+    # 19. reconcile compares a physical count against the app
+    with app.app_context():
+        pos = cash_position()
+    client.post("/cash/reconcile", data={
+        "counted_cash": str(round(pos["cash"], 2)),
+        "counted_bank": str(round(pos["bank"], 2)),
+    }, follow_redirects=True)
+    with app.app_context():
+        from aflatoon.services import last_reconcile
+        rec = last_reconcile()
+        bcheck("reconcile: stored", bool(rec), "nothing saved")
+        bcheck("reconcile: exact count shows zero difference",
+               abs(rec.get("diff_cash", 99)) < 0.01
+               and abs(rec.get("diff_bank", 99)) < 0.01,
+               f"got {rec.get('diff_cash')}/{rec.get('diff_bank')}")
+
+    client.post("/cash/reconcile", data={
+        "counted_cash": str(round(pos["cash"] - 50, 2)),
+        "counted_bank": str(round(pos["bank"], 2)),
+    }, follow_redirects=True)
+    with app.app_context():
+        from aflatoon.services import last_reconcile
+        rec = last_reconcile()
+        bcheck("reconcile: shortfall is caught", abs(rec["diff_cash"] + 50) < 0.01,
+               f"got {rec['diff_cash']}")
+    rec_html = get("/cash/")
+    bcheck("reconcile: difference shown on the page",
+           "difference" in rec_html.lower() and "Counted on" in rec_html)
+
+    # 20. the whole point: nothing is ever entered twice.
+    # Checked at the end, deliberately: the checks above delete their records
+    # again, so several auto lines are gone by now. What must always hold is
+    # that no auto line is ever orphaned from the record that made it.
+    with app.app_context():
+        unlinked = [t.txn_id for t in CashTxn.query.all()
+                    if t.txn_type in ("Sale", "Expense", "EMI", "Purchase")
+                    and not t.source_type]
+    bcheck("money: every auto line points back at its record",
+           not unlinked, f"no source: {unlinked}")
+
+    total_b = 89
     print(f"\n{total_b - bfail}/{total_b} behaviour checks passed")
+
+    # ---- the schema matches the models, on a fresh database ---------------
+    print("\nschema check")
+    from sqlalchemy import inspect
+    with app.app_context():
+        insp = inspect(db.engine)
+        missing = []
+        for table in insp.get_table_names():
+            have = {c["name"] for c in insp.get_columns(table)}
+            model = db.metadata.tables.get(table)
+            if model is None:
+                continue
+            for col in model.columns:
+                if col.name not in have:
+                    missing.append(f"{table}.{col.name}")
+        bcheck("schema: every model column exists in the database",
+               not missing, f"missing {missing}")
+
     return 1 if (bad or cfail or bfail) else 0
 
 

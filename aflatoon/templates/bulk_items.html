@@ -5,15 +5,30 @@
   <div>
     <h1>Add stock in bulk</h1>
     <div class="sub">For a whole thrift lot. Set the shared details once, then
-      only fill in what changes row to row.</div>
+      only fill in what changes.</div>
   </div>
   <div class="actions">
     <a class="btn ghost" href="{{ url_for('items.index') }}">Back to Items</a>
   </div>
 </div>
 
+<div class="tabs" role="tablist">
+  <button type="button" class="tab {{ 'on' if values.get('entry_mode', 'groups') == 'groups' }}"
+          data-tab="groups" onclick="showTab('groups')">
+    Groups <span class="tab-note">for a mixed lot</span>
+  </button>
+  <button type="button" class="tab {{ 'on' if values.get('entry_mode') == 'rows' }}"
+          data-tab="rows" onclick="showTab('rows')">
+    Rows <span class="tab-note">for a uniform lot</span>
+  </button>
+</div>
+
 <form method="post" id="bulk-form">
+  <input type="hidden" name="entry_mode" id="entry_mode"
+         value="{{ values.get('entry_mode', 'groups') }}">
+  {# rendered server-side so the form still works with JS turned off #}
   <input type="hidden" name="row_count" id="row_count" value="{{ rows }}">
+  <input type="hidden" name="group_count" id="group_count" value="{{ groups }}">
 
   <div class="card">
     <div class="panel-head"><h3>1. The lot</h3></div>
@@ -84,23 +99,105 @@
         </select>
       </div>
     </div>
-    <div class="def-actions">
-      <button type="button" class="btn ghost sm" onclick="applyDefaults()">
-        Copy these + cost/price into every row
-      </button>
-      <span class="muted" id="cost-note"></span>
+  </div>
+
+  <!-- ============================ GROUPS TAB ============================ -->
+  <div id="tab-groups" class="tabpane {{ '' if values.get('entry_mode', 'groups') == 'groups' else 'hide' }}">
+    <div class="card">
+      <div class="panel-head">
+        <h3>3. The groups in this lot</h3>
+        <span class="muted" id="lot-hint"></span>
+      </div>
+      <p class="tip">One line = a set of identical pieces. Leave <strong>Cost</strong>
+        empty to use the lot average. Everything else is copied onto each piece.</p>
+
+      <div class="table-wrap">
+      <table class="block-table">
+        <thead>
+          <tr>
+            <th class="rn">#</th>
+            <th>Category</th>
+            <th>Size</th>
+            <th>Colour</th>
+            <th class="r">Cost &#8377;</th>
+            <th class="r">Sell &#8377;</th>
+            <th class="r">MRP &#8377;</th>
+            <th>Note</th>
+            <th class="r">Qty</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="blocks">
+          {% for i in range(groups) %}
+          <tr>
+            <td class="rn">{{ i + 1 }}</td>
+            <td><select name="b{{ i }}_category" class="b-cat">
+                  <option value="">---</option>
+                  {% for c in CATEGORIES %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+                </select></td>
+            <td><input name="b{{ i }}_size" class="b-size" list="sizes"></td>
+            <td><input name="b{{ i }}_colour" class="b-colour"></td>
+            <td><input name="b{{ i }}_cost" class="b-cost" inputmode="decimal" placeholder="avg"></td>
+            <td><input name="b{{ i }}_listed" class="b-listed" inputmode="decimal"></td>
+            <td><input name="b{{ i }}_mrp" class="b-mrp" inputmode="decimal"></td>
+            <td><input name="b{{ i }}_description" class="b-desc"></td>
+            <td><input name="b{{ i }}_qty" class="b-qty" inputmode="numeric" placeholder="0"></td>
+            <td><button type="button" class="row-btn" title="Remove this group"
+                        onclick="this.closest('tr').remove(); recalcBlocks();">&times;</button></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+
+      <div class="def-actions">
+        <button type="button" class="btn ghost sm" onclick="addBlock()">+ Add group</button>
+        <span class="muted" id="block-count">0 pieces</span>
+      </div>
+    </div>
+
+    <div class="totals" id="block-totals">
+      <div class="total-line">
+        <span>Entered <strong id="t-pieces">0</strong>
+          <span id="t-of">pieces</span></span>
+        <span>Cost entered <strong id="t-cost">&#8377;0</strong>
+          <span id="t-vs">of &#8377;0</span></span>
+      </div>
+      <div class="total-warn" id="t-warn"></div>
     </div>
   </div>
 
-  <div class="card">
-    <div class="panel-head">
-      <h3>3. The pieces</h3>
-      <span class="muted" id="count-note">{{ rows }} rows</span>
-    </div>
-    <p class="tip">Only Size, Colour, Cost and Price are per row. Leave a row
-      completely blank and it is skipped.</p>
+  <!-- ============================= ROWS TAB ============================= -->
+  <div id="tab-rows" class="tabpane {{ 'hide' if values.get('entry_mode', 'groups') != 'groups' else '' }}">
+    <div class="card">
+      <div class="panel-head">
+        <h3>3. The pieces</h3>
+        <span class="muted" id="count-note">{{ rows }} rows</span>
+      </div>
+      <div class="def-grid">
+        <div class="entry-field">
+          <label for="default_listed">Default Sell Price (&#8377;)</label>
+          <input id="default_listed" type="number" step="0.01" name="default_listed"
+                 value="{{ values.get('default_listed', '') }}" placeholder="optional">
+        </div>
+        <div class="entry-field">
+          <label for="default_mrp">Default MRP (&#8377;)</label>
+          <input id="default_mrp" type="number" step="0.01" name="default_mrp"
+                 value="{{ values.get('default_mrp', '') }}" placeholder="optional">
+        </div>
+      </div>
+      <div class="def-actions">
+        <button type="button" class="btn ghost sm" onclick="applyDefaults()">
+          Copy these + cost/price into every row
+        </button>
+        <span class="muted" id="cost-note"></span>
+      </div>
 
-    <div class="table-wrap">
+      <p class="tip">Only Size, Colour, Cost and Price vary per row. Leave a row
+        completely blank and it is skipped. Leave <strong>Cost</strong> empty to
+        use the lot average.</p>
+
+      <div class="table-wrap">
       <table class="grid-table">
         <thead>
           <tr>
@@ -125,7 +222,7 @@
                 </select></td>
             <td><input name="r{{ i }}_size" class="r-size" list="sizes"></td>
             <td><input name="r{{ i }}_colour" class="r-colour"></td>
-            <td><input name="r{{ i }}_cost" class="r-cost" inputmode="decimal"></td>
+            <td><input name="r{{ i }}_cost" class="r-cost" inputmode="decimal" placeholder="avg"></td>
             <td><input name="r{{ i }}_listed" class="r-listed" inputmode="decimal"></td>
             <td><input name="r{{ i }}_mrp" class="r-mrp" inputmode="decimal"></td>
             <td><input name="r{{ i }}_description" class="r-desc"></td>
@@ -135,19 +232,20 @@
           {% endfor %}
         </tbody>
       </table>
-    </div>
+      </div>
 
-    <datalist id="sizes">
-      <option value="XS"><option value="S"><option value="M"><option value="L">
-      <option value="XL"><option value="XXL"><option value="Free Size">
-    </datalist>
-
-    <div class="def-actions">
-      <button type="button" class="btn ghost sm" onclick="addRows(20)">+ 20 more rows</button>
-      <button type="button" class="btn ghost sm" onclick="addRows(50)">+ 50 more rows</button>
-      <button type="button" class="btn ghost sm" onclick="clearRows()">Clear all</button>
+      <div class="def-actions">
+        <button type="button" class="btn ghost sm" onclick="addRows(20)">+ 20 more rows</button>
+        <button type="button" class="btn ghost sm" onclick="addRows(50)">+ 50 more rows</button>
+        <button type="button" class="btn ghost sm" onclick="clearRows()">Clear all</button>
+      </div>
     </div>
   </div>
+
+  <datalist id="sizes">
+    <option value="XS"><option value="S"><option value="M"><option value="L">
+    <option value="XL"><option value="XXL"><option value="Free Size">
+  </datalist>
 
   <div class="entry-actions">
     <button type="submit" class="btn primary">Save all pieces</button>
@@ -159,6 +257,13 @@
 <datalist id="suppliers-data" data-json="{{ suppliers_json }}"></datalist>
 
 <style>
+  .tabs{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+  .tab{background:#fff;border:1px solid var(--line);border-radius:9px 9px 0 0;
+    padding:10px 18px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;
+    color:var(--muted);border-bottom-color:transparent}
+  .tab.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+  .tab .tab-note{display:block;font-size:11px;font-weight:400;opacity:.75}
+  .tabpane.hide{display:none}
   .def-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}
   .entry-field{display:grid;gap:6px}
   .entry-field label{font-size:13px;font-weight:600}
@@ -166,21 +271,32 @@
     border-radius:8px;font-size:16px;font-family:inherit;background:#fff;width:100%}
   .entry-field .hint{font-size:12.5px;color:var(--muted);margin:0}
   .def-actions{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap}
-  .tip{font-size:13px;color:var(--muted);margin:0 0 12px}
-  .grid-table input,.grid-table select{padding:7px 9px;border:1px solid var(--line);
-    border-radius:7px;font-size:15px;font-family:inherit;background:#fff;width:100%;
-    min-width:74px}
-  .grid-table td{padding:5px 6px;vertical-align:middle}
-  .grid-table th{padding:8px 6px}
-  .grid-table .rn{color:var(--muted);font-size:12.5px;text-align:right;width:34px}
+  .tip{font-size:13px;color:var(--muted);margin:12px 0}
+  .grid-table input,.grid-table select,.block-table input,.block-table select{
+    padding:7px 9px;border:1px solid var(--line);border-radius:7px;font-size:15px;
+    font-family:inherit;background:#fff;width:100%;min-width:70px}
+  .grid-table td,.block-table td{padding:5px 6px;vertical-align:middle}
+  .grid-table th,.block-table th{padding:8px 6px}
+  .grid-table .rn,.block-table .rn{color:var(--muted);font-size:12.5px;text-align:right;width:34px}
+  .block-table th.r,.block-table td.r{text-align:right}
+  .b-qty{width:62px;min-width:56px}
+  .b-cost,.b-listed,.b-mrp,.r-cost,.r-listed,.r-mrp{text-align:right}
   .row-btn{border:1px solid var(--line);background:#fff;border-radius:7px;cursor:pointer;
     padding:5px 9px;font-size:13px;color:var(--muted)}
   .row-btn:hover{border-color:var(--brand);color:var(--brand)}
   .entry-actions{display:flex;gap:10px;margin:16px 0 40px;flex-wrap:wrap}
-  .r-cost,.r-listed,.r-mrp{text-align:right}
+  .totals{background:#fff;border:1px solid var(--line);border-radius:12px;
+    padding:14px 18px;margin-top:-4px}
+  .total-line{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
+    font-size:14px}
+  .total-line strong{font-size:16px;font-variant-numeric:tabular-nums}
+  .total-warn{margin-top:8px;font-size:13.5px;color:var(--err)}
+  .total-warn.ok{color:var(--ok)}
   @media (max-width:760px){
-    .grid-table .r-desc, .grid-table th:nth-child(8){display:none}
-    .grid-table input,.grid-table select{min-width:62px;font-size:14px;padding:6px 7px}
+    .grid-table .r-desc,.grid-table th:nth-child(8),
+    .block-table .b-desc,.block-table th:nth-child(8){display:none}
+    .grid-table input,.grid-table select,
+    .block-table input,.block-table select{min-width:60px;font-size:14px;padding:6px 7px}
   }
 </style>
 
@@ -189,7 +305,38 @@
   var CATEGORIES = {{ CATEGORIES | tojson }};
   var rowCount = {{ rows }};
   var counter = document.getElementById('rows');
+  var blockBody = document.getElementById('blocks');
   var rowCountInput = document.getElementById('row_count');
+
+  function money(n) {
+    return '\u20b9' + Math.round(n).toLocaleString('en-IN');
+  }
+
+  function num(v) {
+    var f = parseFloat(v);
+    return isNaN(f) ? 0 : f;
+  }
+
+  function showTab(which) {
+    document.querySelectorAll('.tab').forEach(function (t) {
+      t.classList.toggle('on', t.dataset.tab === which);
+    });
+    document.getElementById('tab-groups').classList.toggle('hide', which !== 'groups');
+    document.getElementById('tab-rows').classList.toggle('hide', which !== 'rows');
+    document.getElementById('entry_mode').value = which;
+  }
+
+  function batchInfo() {
+    var sel = document.getElementById('purchase_batch_id_sel');
+    return BATCHES.filter(function (x) { return String(x.id) === sel.value; })[0] || null;
+  }
+
+  function batchCostPerItem() {
+    var b = batchInfo();
+    return b ? b.cost_per_item : 0;
+  }
+
+  /* ---------------- rows tab ---------------- */
 
   function trFor(i) {
     var tr = document.createElement('tr');
@@ -200,7 +347,7 @@
       '</select></td>' +
       '<td><input name="r' + i + '_size" class="r-size" list="sizes"></td>' +
       '<td><input name="r' + i + '_colour" class="r-colour"></td>' +
-      '<td><input name="r' + i + '_cost" class="r-cost" inputmode="decimal"></td>' +
+      '<td><input name="r' + i + '_cost" class="r-cost" inputmode="decimal" placeholder="avg"></td>' +
       '<td><input name="r' + i + '_listed" class="r-listed" inputmode="decimal"></td>' +
       '<td><input name="r' + i + '_mrp" class="r-mrp" inputmode="decimal"></td>' +
       '<td><input name="r' + i + '_description" class="r-desc"></td>' +
@@ -248,35 +395,132 @@
     counter.querySelectorAll('select').forEach(function (el) { el.selectedIndex = 0; });
   }
 
-  function batchCostPerItem() {
-    var sel = document.getElementById('purchase_batch_id_sel');
-    var b = BATCHES.filter(function (x) { return String(x.id) === sel.value; })[0];
-    return b ? b.cost_per_item : 0;
-  }
-
-  document.getElementById('purchase_batch_id_sel').addEventListener('change', function () {
-    var cpi = batchCostPerItem();
-    var note = document.getElementById('cost-note');
-    if (cpi > 0) {
-      note.textContent = 'Cost per piece for this batch: \u20b9' + cpi;
-      document.getElementById('batch-hint').textContent =
-        'This lot works out at \u20b9' + cpi + ' per piece.';
-    } else {
-      note.textContent = '';
-    }
-  });
-
   function applyDefaults() {
     var cat = document.getElementById('default_category').value;
     var cpi = batchCostPerItem();
-    var cost = document.querySelector('.grid-table .r-cost');
-    if (cost && cost.value === '' && cpi > 0) cost.value = cpi;
+    var defListed = document.getElementById('default_listed').value;
+    var defMrp = document.getElementById('default_mrp').value;
+    // fill EVERY row: querySelector stopped after the first cell
     counter.querySelectorAll('tr').forEach(function (tr) {
       var sel = tr.querySelector('.r-cat');
       if (sel && sel.value === '' && cat) sel.value = cat;
+      var c = tr.querySelector('.r-cost');
+      if (c && c.value === '' && cpi > 0) c.value = cpi;
+      var l = tr.querySelector('.r-listed');
+      if (l && l.value === '' && defListed) l.value = defListed;
+      var m = tr.querySelector('.r-mrp');
+      if (m && m.value === '' && defMrp) m.value = defMrp;
     });
+    renumber();
   }
 
+  /* ---------------- groups tab ---------------- */
+
+  function blockTr(i) {
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td class="rn">' + (i + 1) + '</td>' +
+      '<td><select name="b' + i + '_category" class="b-cat"><option value="">---</option>' +
+        CATEGORIES.map(function (c) { return '<option value="' + c + '">' + c + '</option>'; }).join('') +
+      '</select></td>' +
+      '<td><input name="b' + i + '_size" class="b-size" list="sizes"></td>' +
+      '<td><input name="b' + i + '_colour" class="b-colour"></td>' +
+      '<td><input name="b' + i + '_cost" class="b-cost" inputmode="decimal" placeholder="avg"></td>' +
+      '<td><input name="b' + i + '_listed" class="b-listed" inputmode="decimal"></td>' +
+      '<td><input name="b' + i + '_mrp" class="b-mrp" inputmode="decimal"></td>' +
+      '<td><input name="b' + i + '_description" class="b-desc"></td>' +
+      '<td><input name="b' + i + '_qty" class="b-qty" inputmode="numeric" placeholder="0"></td>' +
+      '<td><button type="button" class="row-btn" onclick="this.closest(\'tr\').remove(); recalcBlocks();">&times;</button></td>';
+    return tr;
+  }
+
+  function addBlock() {
+    var i = blockBody.children.length;
+    blockBody.appendChild(blockTr(i));
+    recalcBlocks();
+  }
+
+  function recalcBlocks() {
+    var cpi = batchCostPerItem();
+    var pieces = 0, cost = 0, i;
+    var kids = blockBody.children;
+    for (i = 0; i < kids.length; i++) {
+      var tr = kids[i];
+      tr.querySelector('.rn').textContent = i + 1;
+      var q = parseInt(tr.querySelector('.b-qty').value, 10);
+      if (isNaN(q) || q <= 0) continue;
+      var cEl = tr.querySelector('.b-cost');
+      // keep the name suffix in step with the row position
+      var cName = cEl.name, lName = tr.querySelector('.b-listed').name,
+          mName = tr.querySelector('.b-mrp').name, qName = tr.querySelector('.b-qty').name,
+          catName = tr.querySelector('.b-cat').name, sName = tr.querySelector('.b-size').name,
+          coName = tr.querySelector('.b-colour').name, dName = tr.querySelector('.b-desc').name;
+      [cName, lName, mName, qName, catName, sName, coName, dName].forEach(function (n) {
+        tr.querySelector('[name="' + n + '"]').name = n.replace(/^b\d+_/, 'b' + i + '_');
+      });
+      var unit = cEl.value === '' ? cpi : num(cEl.value);
+      pieces += q;
+      cost += q * unit;
+    }
+
+    // the group_count field is how many blocks the server should read
+    document.getElementById('group_count').value = kids.length;
+    document.getElementById('block-count').textContent =
+      pieces + (pieces === 1 ? ' piece' : ' pieces');
+
+    var b = batchInfo();
+    document.getElementById('t-pieces').textContent = pieces;
+    document.getElementById('t-cost').textContent = money(cost);
+    var ofEl = document.getElementById('t-of');
+    var vsEl = document.getElementById('t-vs');
+    var warn = document.getElementById('t-warn');
+    warn.className = 'total-warn';
+
+    if (!b) {
+      ofEl.textContent = 'pieces (no lot picked)';
+      vsEl.textContent = '';
+      warn.textContent = 'Pick a purchase batch to check these numbers against what you paid.';
+      warn.className = 'total-warn';
+      return;
+    }
+    ofEl.textContent = 'of ' + b.qty + ' in the lot';
+    vsEl.textContent = 'of ' + money(b.total_cost);
+    document.getElementById('lot-hint').textContent =
+      b.batch_id + ' · ' + b.qty + ' pieces · ' + b.processed + ' entered already';
+
+    var dCount = b.qty - pieces;
+    var dCost = b.total_cost - cost;
+    if (pieces === 0) {
+      warn.textContent = 'Nothing entered yet.';
+    } else if (Math.abs(dCount) < 0.5 && Math.abs(dCost) < 0.5) {
+      warn.textContent = 'Matches the lot exactly.';
+      warn.className = 'total-warn ok';
+    } else {
+      var parts = [];
+      if (Math.abs(dCount) >= 0.5) {
+        parts.push((dCount > 0 ? dCount + ' piece' + (dCount === 1 ? '' : 's') + ' not entered'
+                               : Math.abs(dCount) + ' piece' + (dCount === -1 ? '' : 's') + ' too many'));
+      }
+      if (Math.abs(dCost) >= 0.5) {
+        parts.push((dCost > 0 ? money(dCost) + ' of cost unaccounted'
+                              : money(Math.abs(dCost)) + ' over the lot cost'));
+      }
+      warn.textContent = parts.join(' · ') + '.';
+    }
+  }
+
+  blockBody.addEventListener('input', recalcBlocks);
+  document.getElementById('purchase_batch_id_sel').addEventListener('change', function () {
+    var cpi = batchCostPerItem();
+    var note = document.getElementById('cost-note');
+    note.textContent = cpi > 0 ? 'Cost per piece for this batch: \u20b9' + cpi : '';
+    document.getElementById('batch-hint').textContent = cpi > 0
+      ? 'This lot works out at \u20b9' + cpi + ' per piece.'
+      : 'Pick a batch to fill the cost per piece automatically.';
+    recalcBlocks();
+  });
+
   renumber();
+  recalcBlocks();
 </script>
 {% endblock %}

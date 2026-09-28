@@ -22,8 +22,15 @@ ITEM_STATUSES = ["Unprocessed", "Processing", "Ready for Sale", "Reserved", "Sol
                  "Returned", "Damaged", "Lost"]
 ADJUSTMENT_TYPES = ["Physical Count", "Damaged", "Lost", "Found", "Correction"]
 SUPPLIER_TYPES = ["Wholesaler", "Brand", "Manufacturer", "Thrift Vendor", "Other Vendor"]
+LOAN_TYPES = ["Bank Loan", "Gold Loan", "Business Loan", "Borrowed from Person",
+              "Credit Card", "Shop Equipment", "Other"]
 TXN_TYPES = ["Sale", "Refund", "Other Income", "Expense", "Purchase", "EMI",
-             "Owner Withdrawal", "Transfer", "Major Reserve Spend"]
+             "Owner Investment", "Owner Withdrawal", "Transfer",
+             "Major Reserve Spend"]
+
+# Payment methods that actually move money. "Credit/Outstanding" and "Other"
+# do not, so they never auto-post to the cash ledger.
+CASH_METHODS = ("Cash", "UPI", "Card")
 
 # (field_name, label) for the 12 monthly budget categories
 BUDGET_CATEGORY_FIELDS = [
@@ -70,6 +77,11 @@ class Settings(db.Model):
 
     starting_cash = db.Column(db.Numeric(12, 2), default=0)
     starting_bank_upi = db.Column(db.Numeric(12, 2), default=0)
+
+    opening_payables = db.Column(db.Numeric(12, 2), default=0)
+    opening_date = db.Column(db.Date)
+    opening_done = db.Column(db.Boolean, default=False)
+    last_reconcile = db.Column(db.Text)
 
     admin_user = db.Column(db.String(60), default="admin")
     admin_pass_hash = db.Column(db.String(255), nullable=True)
@@ -280,6 +292,7 @@ class EmiTracker(db.Model):
     loan_id = db.Column(db.String(20), unique=True, nullable=False)
     loan_name = db.Column(db.String(120))
     lender = db.Column(db.String(120))
+    loan_type = db.Column(db.String(60), default=LOAN_TYPES[0])
     emi_amount = db.Column(db.Numeric(12, 2), default=0)
     due_day = db.Column(db.Integer)
     next_due_date = db.Column(db.Date)
@@ -323,6 +336,8 @@ class CashTxn(db.Model):
     bank_upi_out = db.Column(db.Numeric(12, 2), default=0)
     reference = db.Column(db.String(120))
     notes = db.Column(db.Text)
+    source_type = db.Column(db.String(20))
+    source_id = db.Column(db.Integer)
     created_at = db.Column(db.DateTime, default=db.func.now())
 
 

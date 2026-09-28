@@ -5,6 +5,7 @@ from aflatoon.extensions import db
 from aflatoon.helpers import (login_required, next_id, to_float, to_date,
                               date_input, money)
 from aflatoon.models import Expense, EXPENSE_CATEGORIES, EXPENSE_NATURES, PAYMENT_METHODS
+from aflatoon.services import post_cash, unpost_cash
 
 bp = Blueprint("expenses", __name__, url_prefix="/expenses")
 
@@ -69,6 +70,22 @@ def _resolve(exp, form):
     return exp
 
 
+def _sync_cash(exp):
+    """Paid expenses leave the till; unpaid ones have not left yet.
+
+    An expense left as Paid? = No is money still owed, so it posts nothing.
+    Ticking Paid later posts the cash line then.
+    """
+    unpost_cash("expense", exp.id)
+    if not exp.is_paid:
+        return
+    label = exp.category or "expense"
+    detail = (exp.description or "").strip()
+    post_cash("expense", exp.id, exp.expense_date, "Expense",
+              f"{label} - {detail}".strip(" -") if detail else label,
+              exp.amount, exp.payment_method, "out")
+
+
 @bp.route("/new", methods=["GET", "POST"])
 @login_required
 def create():
@@ -78,6 +95,8 @@ def create():
         try:
             _resolve(exp, request.form)
             db.session.add(exp)
+            db.session.flush()          # exp.id needed to link the cash line
+            _sync_cash(exp)
             db.session.commit()
             flash("Expense recorded.", "success")
             return redirect(url_for("expenses.index"))
@@ -97,6 +116,7 @@ def edit(exp_id):
     if request.method == "POST":
         try:
             _resolve(exp, request.form)
+            _sync_cash(exp)
             db.session.commit()
             flash("Expense updated.", "success")
             return redirect(url_for("expenses.index"))
@@ -122,6 +142,7 @@ def edit(exp_id):
 @login_required
 def delete(exp_id):
     exp = Expense.query.get_or_404(exp_id)
+    unpost_cash("expense", exp.id)
     db.session.delete(exp)
     db.session.commit()
     flash("Expense deleted.", "info")

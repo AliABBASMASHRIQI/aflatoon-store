@@ -120,6 +120,10 @@
 
     <a href="{{ url_for('dashboard.index') }}" class="{{ 'current' if request.endpoint == 'dashboard.index' }}">Dashboard</a>
 
+    <div class="group">Start here</div>
+    <a href="{{ url_for('core.help_page') }}" class="{{ 'current' if request.endpoint == 'core.help_page' }}">How to use this</a>
+    <a href="{{ url_for('settings_view.opening') }}" class="{{ 'current' if request.endpoint == 'settings_view.opening' }}">Opening Position</a>
+
     <div class="group">Inventory</div>
     <a href="{{ url_for('items.index') }}" class="{{ 'current' if request.blueprint == 'items' }}">Items</a>
     <a href="{{ url_for('batches.index') }}" class="{{ 'current' if request.blueprint == 'batches' }}">Purchase Batches</a>

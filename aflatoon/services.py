@@ -30,6 +30,7 @@ CONTRACT  (kept in sync with aflatoon/views/*.py):
 
 from datetime import date, timedelta
 from decimal import Decimal
+import json
 
 from sqlalchemy import func, or_
 from sqlalchemy.orm import joinedload
@@ -147,10 +148,16 @@ def dashboard_data() -> dict:
         db.session.query(per(func.sum(CashTxn.bank_upi_out), 0))
         .filter(CashTxn.date >= m_start, CashTxn.date < m_end))
     owner_cash_savings_mtd = bank_in - bank_out
+    pos = cash_position()
 
+    # Only loans that are actually due (or overdue) inside the alert window.
+    # Once a paid loan rolls forward it is unpaid again, so counting every
+    # unpaid loan would show all of them forever.
+    alert_days = int(s.emi_alert_days or 5)
     emi_due = EmiTracker.query.filter(
         EmiTracker.is_paid.is_(False),
-        EmiTracker.next_due_date.isnot(None)).count()
+        EmiTracker.next_due_date.isnot(None),
+        EmiTracker.next_due_date <= now + timedelta(days=alert_days)).count()
     dead_stock = 0
     slow_stock = 0
     for r in stock_summary_rows():
@@ -185,6 +192,10 @@ def dashboard_data() -> dict:
         "slow_stock": slow_stock,
         "over_budget": over_budget,
         "quality_issues": quality_issues,
+        "cash_in_hand": pos["cash"],
+        "bank_balance": pos["bank"],
+        "liquid_total": pos["total"],
+        "opening_done": bool(s.opening_done),
     }
 
 
@@ -288,6 +299,126 @@ def cash_ledger_rows() -> dict:
         })
     return {"starting_cash": starting_cash, "starting_bank": starting_bank,
             "rows": rows}
+
+
+# ----------------------------------------------------------------------------
+# cash auto-posting
+#
+# The single most important rule in this app: a sale, an expense, an EMI
+# payment or a supplier payment is recorded ONCE, in its own screen, and
+# the cash ledger updates itself. Entering the same money twice - once in
+# the real screen and once again by hand in Cash - is exactly how the books
+# drift, so the Cash screen is reserved for the handful of movements that
+# have no other home (owner money in/out, transfers, refunds, other income).
+# ----------------------------------------------------------------------------
+
+def cash_position() -> dict:
+    """Cash on hand / bank today: opening balances + everything since."""
+    s = get_settings()
+    cash = float(s.starting_cash or 0)
+    bank = float(s.starting_bank_upi or 0)
+    agg = db.session.query(
+        func.coalesce(func.sum(CashTxn.cash_in), 0),
+        func.coalesce(func.sum(CashTxn.cash_out), 0),
+        func.coalesce(func.sum(CashTxn.bank_upi_in), 0),
+        func.coalesce(func.sum(CashTxn.bank_upi_out), 0)).one()
+    cash += float(agg[0] or 0) - float(agg[1] or 0)
+    bank += float(agg[2] or 0) - float(agg[3] or 0)
+    return {"cash": cash, "bank": bank, "total": cash + bank,
+            "starting_cash": float(s.starting_cash or 0),
+            "starting_bank": float(s.starting_bank_upi or 0)}
+
+
+def post_cash(source_type: str, source_id, txn_date: date, txn_type: str,
+              description: str, amount, payment_method: str,
+              direction: str, reference: str = None) -> "CashTxn | None":
+    """Write one cash-ledger line for a business record.
+
+    direction is "in" or "out". The payment method decides the bucket:
+    Cash goes to the drawer, UPI/Card to the bank. Credit/Outstanding and
+    Other move no money, so nothing is written. A zero amount writes
+    nothing. Nothing here commits - the caller commits once, so the source
+    record and its cash line can never disagree.
+    """
+    amount = float(amount or 0)
+    if amount <= 0:
+        return None
+    if payment_method == "Cash":
+        in_key, out_key = "cash_in", "cash_out"
+    elif payment_method in ("UPI", "Card"):
+        in_key, out_key = "bank_upi_in", "bank_upi_out"
+    else:
+        return None
+
+    txn = CashTxn()
+    txn.date = txn_date or date.today()
+    txn.txn_id = next_id(db.session.query(CashTxn.txn_id), "TXN", 5)
+    txn.txn_type = txn_type
+    txn.description = description
+    setattr(txn, in_key if direction == "in" else out_key, amount)
+    txn.reference = reference
+    txn.source_type = source_type
+    txn.source_id = source_id
+    db.session.add(txn)
+    return txn
+
+
+def unpost_cash(source_type: str, source_id) -> None:
+    """Drop the cash lines generated for a record (all of them).
+
+    Used when a record is edited or deleted so the ledger follows it
+    instead of keeping a stale amount. Installment payments against one
+    purchase batch share a source, so this always removes the full set.
+    """
+    if source_id is None:
+        return
+    CashTxn.query.filter(CashTxn.source_type == source_type,
+                         CashTxn.source_id == source_id).delete(
+        synchronize_session=False)
+
+
+def record_cash_for(source_type: str, source_id, txn_date, txn_type,
+                    description, amount, payment_method, direction,
+                    reference: str = None):
+    """Replace whatever was posted before with the current values."""
+    unpost_cash(source_type, source_id)
+    return post_cash(source_type, source_id, txn_date, txn_type, description,
+                     amount, payment_method, direction, reference)
+
+
+def save_reconcile(counted_cash, counted_bank) -> dict:
+    """Store a physical cash count and return it with the differences.
+
+    A non-zero difference is the point of the whole exercise: it is where
+    a missing record, a wrong amount or a hand in the till shows up.
+    """
+    pos = cash_position()
+    counted_cash = to_float(counted_cash)
+    counted_bank = to_float(counted_bank)
+    entry = {
+        "date": date.today().isoformat(),
+        "counted_cash": counted_cash,
+        "counted_bank": counted_bank,
+        "system_cash": round(pos["cash"], 2),
+        "system_bank": round(pos["bank"], 2),
+        "diff_cash": round(counted_cash - pos["cash"], 2),
+        "diff_bank": round(counted_bank - pos["bank"], 2),
+    }
+    s = get_settings()
+    s.last_reconcile = json.dumps(entry)
+    db.session.commit()
+    return entry
+
+
+def last_reconcile() -> dict:
+    """The stored cash count, or an empty dict if never counted."""
+    raw = get_settings().last_reconcile
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
 
 
 # ----------------------------------------------------------------------------
@@ -414,7 +545,31 @@ def sales_analysis_data() -> dict:
             matrix.append({"month": month_start(m), "cats": {}})
 
     return {"categories": categories, "matrix": matrix,
-            "cat_names": list(cat_totals.keys())}
+            "cat_names": list(cat_totals.keys()),
+            "this_month": current_month_sales()}
+
+
+def current_month_sales() -> dict:
+    """This month's sales, gross profit and units.
+
+    Without this the page leads with all-time totals, which read as zero (or
+    as a lifetime number) on the first day of use and tell you nothing about
+    how this month is going.
+    """
+    now = date.today()
+    m_start, m_end = _month_bounds(now)
+    filt = [Sale.sale_date >= m_start, Sale.sale_date < m_end,
+            Sale.is_returned.is_(False)]
+    sales = _sum(
+        db.session.query(func.coalesce(func.sum(SALE_NET), 0))
+        .filter(*filt))
+    units = _sum(
+        db.session.query(func.coalesce(func.sum(SALE_QTY), 0)).filter(*filt))
+    gp = _sum(
+        db.session.query(func.coalesce(func.sum(SALE_GP), 0))
+        .join(Item, Sale.item_id == Item.id).filter(*filt))
+    return {"month": m_start, "sales": sales, "units": units, "gp": gp,
+            "margin": (gp / sales) if sales else 0}
 
 
 # ----------------------------------------------------------------------------
@@ -541,12 +696,18 @@ def restock_intelligence_rows() -> list:
             "units_sold_90d": s90["units"],
             "sales_90d": s90["sales"],
             "gp_90d": s90["gp"],
+            "velocity": daily,
             "coverage": coverage,
             "score": score,
             "priority": priority,
             "avg_cost": avg_cost.get(cat, 0.0),
             "suggested_fund": suggested_fund,
         })
+    # What share of the available restock money each category is asking for.
+    # Only meaningful across the categories that asked for something.
+    total_fund = sum(r["suggested_fund"] for r in out)
+    for r in out:
+        r["allocation_pct"] = (r["suggested_fund"] / total_fund) if total_fund else 0.0
     out.sort(key=lambda r: (-r["score"], -(r["coverage"] or 9999)))
     return out
 

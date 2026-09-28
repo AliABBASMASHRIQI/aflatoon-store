@@ -19,8 +19,8 @@ def _fmt_coverage(c):
 def stock():
     rows = stock_summary_rows()
     headers = ["Item ID", "Category", "Type", "Brand", "Size", "Status",
-               "Cost", "Sell", "MRP", "Purchased", "Days Held", "Sold",
-               "Stock Value", "Health"]
+               "Cost", "Sell", "MRP", "Purchased", "Days Held", "Sold On",
+               "Units Sold", "Sales Value", "Stock Value", "Health"]
     body = []
     for r in rows:
         it = r["item"]
@@ -32,6 +32,8 @@ def stock():
             datefmt(it.purchase_date) or "-",
             num(r["days_held"]) if r["days_held"] is not None else "-",
             datefmt(it.date_sold) or "-",
+            num(r["units_sold"]),
+            money(r["sales_value"]),
             money(r["stock_value"]), r["health"]]})
 
     on_rail = sum(1 for r in rows if r["in_stock"])
@@ -65,18 +67,28 @@ def sales_analysis():
                     [money(m["cats"].get(c, 0)) for c in names]}
                    for m in d["matrix"]]
     total_sales = sum(c["sales"] for c in d["categories"])
+    tm = d.get("this_month") or {}
     return render_template("sales_analysis.html",
                            d=d,
                            categories=d["categories"],
+                           this_month=tm,
                            cat_headers=["Category", "Units", "Sales", "Gross Profit",
                                         "Margin", "Sales Share"],
                            cat_rows=cat_rows,
                            matrix_headers=matrix_headers,
                            matrix_rows=matrix_rows,
-                           kpis=[{"label": "Total sales", "value": money(total_sales)},
-                                 {"label": "Categories selling", "value": num(len(names))},
-                                 {"label": "Units sold", "value": num(sum(c["units"] for c in d["categories"]))},
-                                 {"label": "Gross profit", "value": money(sum(c["gp"] for c in d["categories"]))}])
+                           kpis=[{"label": "This month sales",
+                                  "value": money(tm.get("sales", 0))},
+                                 {"label": "This month gross profit",
+                                  "value": money(tm.get("gp", 0))},
+                                 {"label": "This month units",
+                                  "value": num(tm.get("units", 0))},
+                                 {"label": "This month margin",
+                                  "value": pct(tm.get("margin", 0))},
+                                 {"label": "All-time sales",
+                                  "value": money(total_sales)},
+                                 {"label": "Units sold (all time)",
+                                  "value": num(sum(c["units"] for c in d["categories"]))}])
 
 
 @bp.route("/target")
@@ -93,7 +105,8 @@ def target():
                                   "value": money(summary["twelve_month_total"])}],
                            headers=["Month", "Target", "Actual", "Achievement",
                                     "Remaining", "Days Left", "Required/Day",
-                                    "Run Rate", "Forecast", "Status"],
+                                    "Run Rate", "Forecast", "Forecast vs Target",
+                                    "Status"],
                            rows=[{
                                "cells": [r["month"].strftime("%b %Y"),
                                          money(r["target"]), money(r["actual"]),
@@ -101,6 +114,8 @@ def target():
                                          num(r["days_in_month"] - r["days_elapsed"]),
                                          money(r["required_daily"]),
                                          money(r["run_rate"]), money(r["forecast"]),
+                                         f"{'+' if r['forecast'] >= r['target'] else ''}"
+                                         f"{money(r['forecast'] - r['target'])}",
                                          r["status"]],
                            } for r in rows])
 
@@ -109,17 +124,30 @@ def target():
 @login_required
 def restock():
     rows = restock_intelligence_rows()
+    total_fund = sum(r["suggested_fund"] for r in rows)
     return render_template("report.html",
                            title="Restock Intelligence",
                            subtitle="Category-level restock priority and suggested fund",
+                           kpis=[{"label": "Total suggested spend",
+                                  "value": money(total_fund)},
+                                 {"label": "Categories short of stock",
+                                  "value": num(sum(1 for r in rows
+                                                   if r["score"] >= 3))},
+                                 {"label": "Critical",
+                                  "value": num(sum(1 for r in rows
+                                                   if r["priority"] == "CRITICAL"))}],
                            headers=["Category", "Ready Units", "Sold 90D", "Sales 90D",
-                                    "GP 90D", "Coverage", "Priority Score",
-                                    "Priority", "Suggested Fund"],
+                                    "GP 90D", "Velocity/Day", "Coverage",
+                                    "Priority Score", "Priority", "Allocation",
+                                    "Suggested Fund"],
                            rows=[{
                                "cells": [r["category"], num(r["sale_ready_units"]),
                                          num(r["units_sold_90d"]), money(r["sales_90d"]),
-                                         money(r["gp_90d"]), _fmt_coverage(r["coverage"]),
+                                         money(r["gp_90d"]),
+                                         f"{r.get('velocity', 0):.2f}",
+                                         _fmt_coverage(r["coverage"]),
                                          f"{r['score']:.1f}", r["priority"],
+                                         pct(r.get("allocation_pct", 0)),
                                          money(r["suggested_fund"])],
                            } for r in rows])
 

@@ -5,12 +5,27 @@ from aflatoon.extensions import db
 from aflatoon.helpers import (login_required, next_id, to_float, to_date,
                               date_input, money)
 from aflatoon.models import CashTxn, TXN_TYPES
-from aflatoon.services import cash_ledger_rows
+from aflatoon.services import cash_ledger_rows, save_reconcile, last_reconcile
 
 bp = Blueprint("cash", __name__, url_prefix="/cash")
 
 
-@bp.route("/")
+@bp.route("/reconcile", methods=["POST"])
+@login_required
+def reconcile():
+    """Compare what is physically in the till against what the app says."""
+    entry = save_reconcile(request.form.get("counted_cash"),
+                           request.form.get("counted_bank"))
+    diff = abs(entry["diff_cash"]) + abs(entry["diff_bank"])
+    if diff < 0.01:
+        flash("Counted and matched. Your books agree with your money.", "success")
+    else:
+        flash("Difference found. Check for a missing or wrong entry below.",
+              "danger")
+    return redirect(url_for("cash.index"))
+
+
+@bp.route("/", methods=["GET"])
 @login_required
 def index():
     led = cash_ledger_rows()
@@ -36,6 +51,7 @@ def index():
         closing_total=(last["running_total"] if last
                        else led["starting_cash"] + led["starting_bank"]),
         new_url=url_for("cash.create"),
+        reconcile=last_reconcile(),
     )
 
 

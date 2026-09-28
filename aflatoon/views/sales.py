@@ -5,6 +5,7 @@ from aflatoon.extensions import db
 from aflatoon.helpers import (login_required, to_float, to_date, to_bool,
                               date_input, money, pct)
 from aflatoon.models import Sale, Item, PAYMENT_METHODS
+from aflatoon.services import post_cash, unpost_cash
 
 bp = Blueprint("sales", __name__, url_prefix="/sales")
 
@@ -90,6 +91,22 @@ def _resolve(sale, form):
     return sale
 
 
+def _sync_cash(sale):
+    """Keep the cash ledger in step with a sale.
+
+    A real sale brings money in. A returned sale brings nothing in, so its
+    ledger line is removed instead. Credit/Outstanding sales post nothing
+    at all - post_cash skips them.
+    """
+    unpost_cash("sale", sale.id)
+    if sale.is_returned:
+        return
+    label = sale.item.item_id if sale.item else (sale.bill_id or "sale")
+    post_cash("sale", sale.id, sale.sale_date, "Sale",
+              f"Sale {sale.bill_id or ''} - {label}".strip(" -"),
+              sale.final_value, sale.payment_method, "in")
+
+
 @bp.route("/new", methods=["GET", "POST"])
 @login_required
 def create():
@@ -98,6 +115,8 @@ def create():
         try:
             _resolve(sale, request.form)
             db.session.add(sale)
+            db.session.flush()          # sale.id needed to link the cash line
+            _sync_cash(sale)
             db.session.commit()
             flash("Sale recorded.", "success")
             return redirect(url_for("sales.index"))
@@ -122,6 +141,7 @@ def edit(sale_id):
             if old_item and old_item.id != sale.item_id and not sale.is_returned:
                 old_item.current_status = "Ready for Sale"
                 old_item.date_sold = None
+            _sync_cash(sale)
             db.session.commit()
             flash("Sale updated.", "success")
             return redirect(url_for("sales.index"))
@@ -150,6 +170,7 @@ def delete(sale_id):
     sale = Sale.query.get_or_404(sale_id)
     item = sale.item
     was_returned = sale.is_returned
+    unpost_cash("sale", sale.id)
     db.session.delete(sale)
     # a deleted sale means the piece is back on the rail
     if item and not was_returned and item.current_status == "Sold":

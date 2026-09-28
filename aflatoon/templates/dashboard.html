@@ -12,7 +12,32 @@
   </div>
 </div>
 
+{% if not d.opening_done %}
+<div class="banner">
+  <div>
+    <strong>First, set your opening position.</strong>
+    Type in the cash and bank you have right now, so the app starts from the truth.
+  </div>
+  <a class="btn primary" href="{{ url_for('settings_view.opening') }}">Set it now</a>
+</div>
+{% endif %}
+
 <div class="grid kpis">
+  <div class="kpi">
+    <div class="label">Cash in Hand</div>
+    <div class="value">{{ d.cash_in_hand|money }}</div>
+    <div class="hint"><a href="{{ url_for('cash.index') }}">ledger</a></div>
+  </div>
+  <div class="kpi">
+    <div class="label">Bank / UPI</div>
+    <div class="value">{{ d.bank_balance|money }}</div>
+    <div class="hint"><a href="{{ url_for('cash.index') }}">ledger</a></div>
+  </div>
+  <div class="kpi">
+    <div class="label">Total Money</div>
+    <div class="value ok">{{ d.liquid_total|money }}</div>
+    <div class="hint">cash + bank</div>
+  </div>
   <div class="kpi">
     <div class="label">Today's Sales</div>
     <div class="value">{{ d.today_sales|money }}</div>
@@ -49,7 +74,7 @@
   <div class="kpi">
     <div class="label">Owner Cash MTD</div>
     <div class="value">{{ d.owner_cash_savings_mtd|money }}</div>
-    <div class="hint">target {{ d.owner_cash_target_pct|pct }}</div>
+    <div class="hint">bank movement this month, target {{ d.owner_cash_target_pct|pct }}</div>
   </div>
 </div>
 
@@ -107,6 +132,9 @@
 {% endblock %}
 
 <style>
+  .banner{display:flex;align-items:center;justify-content:space-between;gap:16px;
+    flex-wrap:wrap;background:#fffbeb;border:1px solid #fde68a;border-left:4px solid var(--warn);
+    border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:14px}
   .two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
   .kv{margin:0;display:grid;gap:9px;font-size:14px}
   .kv > div{display:flex;justify-content:space-between;gap:12px;

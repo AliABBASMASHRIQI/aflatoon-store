@@ -12,8 +12,16 @@ from aflatoon.models import (Item, PurchaseBatch, Supplier,
 
 bp = Blueprint("items", __name__, url_prefix="/items")
 
-BULK_ROWS = 20          # rows rendered per block
+BULK_ROWS = 20          # rows rendered per block in the "Rows" tab
+BULK_GROUPS = 8         # group blocks rendered in the "Groups" tab
 BULK_MAX_ROWS = 300     # hard cap so a stray POST cannot create 100k rows
+
+
+def _block_cost(block_cost, batch_cost_per_item):
+    """A block's own cost wins; a blank one falls back to the lot average."""
+    if block_cost is not None:
+        return block_cost
+    return round(float(batch_cost_per_item or 0), 2)
 
 
 def _next_item_number() -> int:
@@ -130,9 +138,15 @@ def index():
 def bulk():
     """Enter a whole purchase lot in one go.
 
-    A thrift lot is 100-200 pieces of broadly similar stock, so the defaults
-    are set once (type, brand, category, cost) and the grid only needs the
-    things that actually vary: size, colour and price.
+    Two ways in, because thrift lots are not uniform:
+
+      * Groups - one line per batch of identical pieces ("10 shirts at Rs60").
+        This is what a mixed lot needs: the cost per piece differs group to
+        group, which the single batch average cannot express.
+      * Rows  - a flat grid for a lot that is broadly the same throughout.
+
+    Both write Item rows in the same AFL-##### sequence, so switching between
+    them (or using one after the other for the same lot) cannot collide.
     """
     batches = (db.session.query(PurchaseBatch)
                .order_by(PurchaseBatch.purchase_date.desc()).all())
@@ -141,55 +155,52 @@ def bulk():
         {"id": b.id, "batch_id": b.batch_id,
          "cost_per_item": round(float(b.cost_per_item or 0), 2),
          "qty": b.qty_purchased or 0,
+         "total_cost": round(float(b.total_cost or 0), 2),
          "processed": b.processed_qty}
         for b in batches])
 
     ctx = dict(batches=batches, batch_json=batch_json, rows=BULK_ROWS,
+               groups=BULK_GROUPS,
                suppliers=suppliers, suppliers_json=json.dumps(suppliers),
                CATEGORIES=CATEGORIES, ITEM_TYPES=ITEM_TYPES,
                BRAND_TYPES=BRAND_TYPES, ITEM_STATUSES=ITEM_STATUSES)
 
     if request.method == "POST":
+        mode = request.form.get("entry_mode") or "rows"
+
         batch_id = None
+        batch_obj = None
         bsel = request.form.get("purchase_batch_id_sel")
         if bsel:
-            batch = db.session.get(PurchaseBatch, int(bsel)) if bsel.isdigit() else None
-            batch_id = batch.id if batch else None
+            batch_obj = db.session.get(PurchaseBatch, int(bsel)) if bsel.isdigit() else None
+            batch_id = batch_obj.id if batch_obj else None
+        lot_cpi = round(float(batch_obj.cost_per_item or 0), 2) if batch_obj else 0.0
 
         item_type = request.form.get("item_type") or "Clothing"
         brand_type = request.form.get("brand_type") or "Unbranded"
         default_cat = request.form.get("default_category") or ""
         purchase_date = to_date(request.form.get("purchase_date"))
+        default_listed = request.form.get("default_listed", "").strip()
+        default_mrp = request.form.get("default_mrp", "").strip()
+        status = request.form.get("current_status") or "Ready for Sale"
         supplier_id = None
         ssel = request.form.get("supplier_sel")
         if ssel:
             sup = Supplier.query.filter_by(name=ssel).first()
             supplier_id = sup.id if sup else None
 
-        try:
-            row_count = min(int(request.form.get("row_count") or 0), BULK_MAX_ROWS)
-        except (TypeError, ValueError):
-            row_count = 0
-
         nxt = _next_item_number()
         first_code = f"AFL-{nxt:05d}"
         created, skipped = 0, 0
-        for i in range(row_count):
-            def cell(field):
-                return (request.form.get(f"r{i}_{field}") or "").strip()
+        capped = False
 
-            category = cell("category") or default_cat
-            size = cell("size")
-            colour = cell("colour")
-            cost_raw = cell("cost")
-            listed_raw = cell("listed")
-            mrp_raw = cell("mrp")
-            desc = cell("description")
-
-            if not any([size, colour, cost_raw, listed_raw, mrp_raw, desc]):
-                skipped += 1
-                continue
-
+        def add_item(category, subcategory, description, size, colour,
+                     cost, listed, mrp):
+            """Append one item. Returns False if the cap has been reached."""
+            nonlocal nxt, created, capped
+            if created >= BULK_MAX_ROWS:
+                capped = True
+                return False
             item = Item()
             item.item_id = f"AFL-{nxt:05d}"
             nxt += 1
@@ -197,19 +208,77 @@ def bulk():
             item.supplier_id = supplier_id
             item.item_type = item_type
             item.category = category or None
-            item.subcategory = cell("subcategory") or None
+            item.subcategory = subcategory or None
             item.brand_type = brand_type
             item.brand_name = None
-            item.description = desc or None
+            item.description = description or None
             item.size = size or None
             item.colour = colour or None
             item.purchase_date = purchase_date
-            item.allocated_cost = to_float(cost_raw)
-            item.listed_price = to_float(listed_raw)
-            item.mrp = to_float(mrp_raw)
-            item.current_status = request.form.get("current_status") or "Ready for Sale"
+            item.allocated_cost = to_float(cost)
+            item.listed_price = to_float(listed)
+            item.mrp = to_float(mrp)
+            item.current_status = status
             db.session.add(item)
             created += 1
+            return True
+
+        if mode == "groups":
+            try:
+                group_count = min(int(request.form.get("group_count") or 0),
+                                  BULK_GROUPS + 200)
+            except (TypeError, ValueError):
+                group_count = 0
+            for i in range(group_count):
+                def gcell(field):
+                    return (request.form.get(f"b{i}_{field}") or "").strip()
+
+                category = gcell("category") or default_cat
+                qty_raw = gcell("qty")
+                qty = int(to_float(qty_raw, 0))
+                cost_raw = gcell("cost")
+                # a blank block cost means "use the lot average"
+                cost = (to_float(cost_raw) if cost_raw
+                        else _block_cost(None, lot_cpi))
+                listed = gcell("listed") or default_listed
+                mrp = gcell("mrp") or default_mrp
+
+                if qty <= 0 or not category:
+                    if any([gcell("size"), gcell("colour"), cost_raw,
+                            gcell("listed"), gcell("description")]):
+                        skipped += 1
+                    continue
+                for _ in range(qty):
+                    if not add_item(category, gcell("subcategory"),
+                                    gcell("description"), gcell("size"),
+                                    gcell("colour"), cost, listed, mrp):
+                        break
+        else:
+            try:
+                row_count = min(int(request.form.get("row_count") or 0), BULK_MAX_ROWS)
+            except (TypeError, ValueError):
+                row_count = 0
+            for i in range(row_count):
+                def cell(field):
+                    return (request.form.get(f"r{i}_{field}") or "").strip()
+
+                category = cell("category") or default_cat
+                size = cell("size")
+                colour = cell("colour")
+                cost_raw = cell("cost")
+                listed_raw = cell("listed")
+                mrp_raw = cell("mrp")
+                desc = cell("description")
+
+                if not any([size, colour, cost_raw, listed_raw, mrp_raw, desc]):
+                    skipped += 1
+                    continue
+                # same rule as groups: blank means the lot average
+                cost = (to_float(cost_raw) if cost_raw
+                        else _block_cost(None, lot_cpi))
+                add_item(category, cell("subcategory"), desc, size, colour,
+                         cost, listed_raw or default_listed,
+                         mrp_raw or default_mrp)
 
         try:
             db.session.commit()
@@ -226,7 +295,12 @@ def bulk():
             else:
                 msg += f" Codes {first_code} to {last}."
             if skipped:
-                msg += f" {skipped} blank row{'s' if skipped != 1 else ''} skipped."
+                msg += f" {skipped} empty {'block' if mode == 'groups' else 'row'}{'s' if skipped != 1 else ''} skipped."
+            if capped:
+                msg += f" Stopped at the {BULK_MAX_ROWS} item limit."
+            if batch_obj and created != (batch_obj.qty_purchased or 0):
+                msg += (f" Lot {batch_obj.batch_id} says "
+                        f"{batch_obj.qty_purchased} pieces.")
             flash(msg, "success")
             return redirect(url_for("items.index"))
         flash("Nothing to save - every row was blank.", "warning")
@@ -234,7 +308,7 @@ def bulk():
 
     return render_template("bulk_items.html", values={
         "item_type": "Clothing", "brand_type": "Unbranded",
-        "current_status": "Ready for Sale",
+        "current_status": "Ready for Sale", "entry_mode": "groups",
         "purchase_date": _date.today().isoformat()}, **ctx)
 
 

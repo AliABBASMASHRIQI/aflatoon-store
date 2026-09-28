@@ -1,11 +1,43 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash
+from datetime import date
 
 from aflatoon.extensions import db
-from aflatoon.helpers import login_required, to_float, money
-from aflatoon.models import Settings
-from aflatoon.services import get_settings
+from aflatoon.helpers import (login_required, to_float, to_date, date_input,
+                              money)
+from aflatoon.models import Settings, PurchaseBatch, EmiTracker
+from aflatoon.services import get_settings, cash_position
 
 bp = Blueprint("settings_view", __name__, url_prefix="/settings")
+
+
+@bp.route("/opening", methods=["GET", "POST"])
+@login_required
+def opening():
+    """Where the books start.
+
+    Nothing from before today can be imported - the year of trading was
+    never written down anywhere. So the honest way to start is to record
+    what is true right now, and let the app keep it true from here.
+    """
+    s = get_settings()
+    if request.method == "POST":
+        s.starting_cash = to_float(request.form.get("starting_cash"))
+        s.starting_bank_upi = to_float(request.form.get("starting_bank_upi"))
+        s.opening_payables = to_float(request.form.get("opening_payables"))
+        s.opening_date = to_date(request.form.get("opening_date")) or date.today()
+        s.opening_done = True
+        db.session.commit()
+        flash("Opening position saved. Your cash balance is now correct.", "success")
+        return redirect(url_for("dashboard.index"))
+    return render_template(
+        "opening.html", s=s, money=money,
+        supplier_owing=sum(float(b.outstanding or 0)
+                           for b in PurchaseBatch.query.all()),
+        loans=EmiTracker.query.order_by(EmiTracker.next_due_date).all(),
+        loans_due=sum(1 for l in EmiTracker.query.all()
+                      if l.days_to_due is not None and l.days_to_due <= 5),
+        today=date.today().isoformat(),
+        position=cash_position())
 
 
 @bp.route("/", methods=["GET", "POST"])
