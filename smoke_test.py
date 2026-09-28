@@ -206,6 +206,9 @@ def main():
         ("/settings/opening", 'opening: cash', 'name="starting_cash"'),
         ("/settings/opening", 'opening: bank', 'name="starting_bank_upi"'),
         ("/settings/opening", 'opening: why', "Why this page exists"),
+        # it rendered a 500 once because date_input is a helper, not a
+        # jinja filter: a 200 alone did not catch it
+        ("/settings/opening", 'opening: date formatted', 'name="opening_date"'),
         ("/help", 'help: one rule', "type each thing"),
         ("/help", 'help: owner investment', "Owner Investment"),
         ("/help", 'help: not twice', "Do not add them again"),

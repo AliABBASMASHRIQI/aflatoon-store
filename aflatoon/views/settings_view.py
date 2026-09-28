@@ -31,6 +31,9 @@ def opening():
         return redirect(url_for("dashboard.index"))
     return render_template(
         "opening.html", s=s, money=money,
+        # date_input is a helper, not a jinja filter, so the opening date
+        # has to be formatted here for the template to use
+        date_input=date_input,
         supplier_owing=sum(float(b.outstanding or 0)
                            for b in PurchaseBatch.query.all()),
         loans=EmiTracker.query.order_by(EmiTracker.next_due_date).all(),
