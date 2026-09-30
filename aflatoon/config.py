@@ -22,6 +22,15 @@ class Config:
     if not DATABASE_URL:
         DATABASE_URL = "sqlite:///" + os.path.join(BASE_DIR, "aflatoon.db")
 
+    # Force the psycopg2 driver. A bare "postgresql://" URL makes SQLAlchemy
+    # 2.x default to psycopg v3, which is not installed - and that is exactly
+    # what Supabase's dashboard hands you. This way whatever string gets
+    # pasted, it resolves to the driver in requirements.txt. psycopg2 also
+    # interpolates parameters client-side rather than using server-side
+    # prepared statements, which is what the transaction pooler wants.
+    if DATABASE_URL.startswith("postgresql://"):
+        DATABASE_URL = "postgresql+psycopg2://" + DATABASE_URL[len("postgresql://"):]
+
     SQLALCHEMY_DATABASE_URI = DATABASE_URL
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
